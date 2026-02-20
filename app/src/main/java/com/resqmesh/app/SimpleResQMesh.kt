@@ -46,6 +46,9 @@ import android.content.Context
 import android.content.Intent
 import android.net.wifi.WifiManager
 import android.provider.Settings
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.ui.graphics.Color.Companion.DarkGray
+import androidx.compose.ui.text.style.TextAlign
 
 // --- DATA MODELS ---
 enum class SosType { MEDICAL, RESCUE, FOOD, TRAPPED, GENERAL }
@@ -170,7 +173,14 @@ fun HomeScreen(
     var selectedType by remember { mutableStateOf(SosType.GENERAL) }
     var messageText by remember { mutableStateOf("") }
     var expanded by remember { mutableStateOf(false) }
-
+// Our mathematically safe quick replies (All under 18 chars)
+    val quickReplies = listOf(
+        "Medical Emergency",
+        "Trapped in debris",
+        "Need Evacuation",
+        "Need water/food",
+        "Send Rescue"
+    )
     Column(modifier = Modifier.fillMaxSize().background(PureBlack)) {
         // TOP HEADER
         Column(
@@ -213,20 +223,67 @@ fun HomeScreen(
                     }
                 }
                 Spacer(Modifier.height(24.dp))
-                Text("Additional Message (Optional)", color = TextWhite, fontSize = 14.sp, modifier = Modifier.padding(bottom = 8.dp))
+                // --- QUICK REPLIES SECTION ---
+                Text(
+                    text = "QUICK REPLIES",
+                    color = TextLightGray,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
+                ) {
+                    items(quickReplies) { reply ->
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(16.dp))
+                                // Highlights Cyan if selected, stays Dark Gray if not
+                                .background(if (messageText == reply) BrightCyan else Color(0xFF1E1E1E))
+                                .clickable { messageText = reply } // Fills the text box instantly!
+                                .padding(horizontal = 16.dp, vertical = 8.dp)
+                        ) {
+                            Text(
+                                text = reply,
+                                color = if (messageText == reply) PureBlack else TextWhite,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+                }
+                // --- CUSTOM MESSAGE TEXT FIELD ---
                 OutlinedTextField(
                     value = messageText,
-                    onValueChange = { if (it.length <= 200) messageText = it },
-                    placeholder = { Text("Add any additional details...", color = TextLightGray) },
-                    modifier = Modifier.fillMaxWidth().height(120.dp),
-                    shape = RoundedCornerShape(12.dp),
+                    onValueChange = { newText ->
+                        // Only update if it's 18 characters or less!
+                        if (newText.length <= 18) {
+                            messageText = newText
+                        }
+                    },
+                    label = { Text("Custom Message (Optional)", color = TextLightGray) },
+                    placeholder = { Text("Max 18 chars...", color = DarkGray) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp),
                     colors = OutlinedTextFieldDefaults.colors(
-                        unfocusedContainerColor = InputGrayBg, focusedContainerColor = InputGrayBg,
-                        unfocusedBorderColor = BorderGray, focusedBorderColor = BrightCyan,
-                        unfocusedTextColor = TextWhite, focusedTextColor = TextWhite
-                    )
+                        focusedBorderColor = BrightCyan,
+                        unfocusedBorderColor = BorderGray,
+                        focusedTextColor = TextWhite,
+                        unfocusedTextColor = TextWhite
+                    ),
+                    // Adds the character counter to the bottom right!
+                    supportingText = {
+                        Text(
+                            text = "${messageText.length} / 18",
+                            modifier = Modifier.fillMaxWidth(),
+                            textAlign = TextAlign.End,
+                            color = if (messageText.length == 18) VibrantRed else TextLightGray
+                        )
+                    }
                 )
-                Text("${messageText.length}/200 characters", color = TextLightGray, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
             }
 
             // BOTTOM SECTION
