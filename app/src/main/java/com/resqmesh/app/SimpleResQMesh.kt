@@ -30,6 +30,22 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import java.text.SimpleDateFormat
 import java.util.*
+import android.Manifest
+import android.os.Build
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.clickable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import android.app.Activity
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothManager
+import android.content.Context
+import android.content.Intent
+import android.net.wifi.WifiManager
+import android.provider.Settings
 
 // --- DATA MODELS ---
 enum class SosType { MEDICAL, RESCUE, FOOD, TRAPPED, GENERAL }
@@ -135,7 +151,8 @@ fun SimpleResQMeshApp(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
                 })
             }
             composable("settings") {
-                SettingsScreen()
+                    SettingsScreen(viewModel = viewModel)
+
             }
         }
     }
@@ -300,9 +317,85 @@ fun StatusScreen(messages: List<SosMessage>) {
 }
 
 @Composable
-fun SettingsScreen() {
-    var bluetoothEnabled by remember { mutableStateOf(true) }
-    var wifiDirectEnabled by remember { mutableStateOf(true) }
+fun SettingsScreen(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
+    val context = LocalContext.current
+
+    // Hardware Managers
+    val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+    val bluetoothAdapter: BluetoothAdapter? = bluetoothManager.adapter
+    val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+
+    val bluetoothEnabled by viewModel.bluetoothEnabled.collectAsState()
+    val wifiDirectEnabled by viewModel.wifiDirectEnabled.collectAsState()
+
+    // NEW: Memory to track WHICH button was pressed
+    var pendingAction by remember { mutableStateOf("") }
+
+    val enableBluetoothLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            viewModel.setBluetoothEnabled(true)
+            Toast.makeText(context, "Bluetooth Activated", Toast.LENGTH_SHORT).show()
+        } else {
+            viewModel.setBluetoothEnabled(false)
+            Toast.makeText(context, "Bluetooth activation denied", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    val permissionsToRequest = remember {
+        mutableListOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        ).apply {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                add(Manifest.permission.BLUETOOTH_SCAN)
+                add(Manifest.permission.BLUETOOTH_ADVERTISE)
+                add(Manifest.permission.BLUETOOTH_CONNECT)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                add(Manifest.permission.NEARBY_WIFI_DEVICES)
+            }
+        }.toTypedArray()
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissionsMap ->
+        val allGranted = permissionsMap.values.all { it == true }
+
+        if (allGranted) {
+            // We check WHICH button fired the request
+            if (pendingAction == "BLUETOOTH") {
+                if (bluetoothAdapter?.isEnabled == false) {
+                    val enableBtIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
+                    enableBluetoothLauncher.launch(enableBtIntent)
+                } else {
+                    viewModel.setBluetoothEnabled(true)
+                }
+            } else if (pendingAction == "WIFI") {
+                try {
+                    // Check if Wi-Fi is actually on (Now safe because we added the permission!)
+                    if (!wifiManager.isWifiEnabled) {
+                        Toast.makeText(context, "Please turn on Wi-Fi for Mesh Networking", Toast.LENGTH_LONG).show()
+                        val wifiIntent = Intent(Settings.ACTION_WIFI_SETTINGS)
+                        context.startActivity(wifiIntent)
+                    }
+                    viewModel.setWifiDirectEnabled(true)
+                } catch (e: Exception) {
+                    // If the phone blocks us or the settings page is missing, catch the crash!
+                    Toast.makeText(context, "Could not access Wi-Fi hardware", Toast.LENGTH_SHORT).show()
+                    viewModel.setWifiDirectEnabled(false)
+                }
+            }
+        } else {
+            if (pendingAction == "BLUETOOTH") viewModel.setBluetoothEnabled(false)
+            if (pendingAction == "WIFI") viewModel.setWifiDirectEnabled(false)
+            Toast.makeText(context, "Permissions required for Mesh Networking", Toast.LENGTH_LONG).show()
+        }
+        // Reset the action
+        pendingAction = ""
+    }
 
     Column(modifier = Modifier.fillMaxSize().background(PureBlack)) {
         // HEADER
@@ -315,9 +408,33 @@ fun SettingsScreen() {
             item {
                 Text("CONNECTIVITY", color = TextLightGray, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 16.dp))
 
-                SettingsRowToggle(icon = Icons.Default.Bluetooth, iconBg = IconBlueBg, title = "Bluetooth", subtitle = "Enabled", checked = bluetoothEnabled, onCheckedChange = { bluetoothEnabled = it })
+                SettingsRowToggle(
+                    icon = Icons.Default.Bluetooth, iconBg = IconBlueBg, title = "Bluetooth",
+                    subtitle = if(bluetoothEnabled) "Enabled" else "Disabled",
+                    checked = bluetoothEnabled,
+                    onCheckedChange = { isChecked ->
+                        if (isChecked) {
+                            pendingAction = "BLUETOOTH" // Flag it!
+                            permissionLauncher.launch(permissionsToRequest)
+                        } else {
+                            viewModel.setBluetoothEnabled(false)
+                        }
+                    }
+                )
                 Spacer(Modifier.height(16.dp))
-                SettingsRowToggle(icon = Icons.Default.Wifi, iconBg = IconPurpleBg, title = "Wi-Fi Direct", subtitle = "Enabled", checked = wifiDirectEnabled, onCheckedChange = { wifiDirectEnabled = it })
+                SettingsRowToggle(
+                    icon = Icons.Default.Wifi, iconBg = IconPurpleBg, title = "Wi-Fi Direct",
+                    subtitle = if(wifiDirectEnabled) "Enabled" else "Disabled",
+                    checked = wifiDirectEnabled,
+                    onCheckedChange = { isChecked ->
+                        if (isChecked) {
+                            pendingAction = "WIFI" // Flag it!
+                            permissionLauncher.launch(permissionsToRequest)
+                        } else {
+                            viewModel.setWifiDirectEnabled(false)
+                        }
+                    }
+                )
 
                 Spacer(Modifier.height(32.dp))
                 Text("GENERAL", color = TextLightGray, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 16.dp))
@@ -347,11 +464,24 @@ fun SettingsScreen() {
         }
     }
 }
-
 // Helper components for Settings
 @Composable
-fun SettingsRowToggle(icon: ImageVector, iconBg: Color, title: String, subtitle: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
-    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+fun SettingsRowToggle(
+    icon: ImageVector,
+    iconBg: Color,
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onCheckedChange(!checked) } // Makes the whole row clickable
+            .padding(vertical = 8.dp), // Adds breathing room for easier tapping
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(modifier = Modifier.size(40.dp).background(iconBg, CircleShape), contentAlignment = Alignment.Center) {
                 Icon(icon, null, tint = TextWhite, modifier = Modifier.size(20.dp))
@@ -362,13 +492,36 @@ fun SettingsRowToggle(icon: ImageVector, iconBg: Color, title: String, subtitle:
                 Text(subtitle, color = TextLightGray, fontSize = 12.sp)
             }
         }
-        Switch(checked = checked, onCheckedChange = onCheckedChange, colors = SwitchDefaults.colors(checkedThumbColor = TextWhite, checkedTrackColor = BrightCyan))
+        // Switch's internal click is disabled (null) so the Row handles the tap smoothly
+        Switch(
+            checked = checked,
+            onCheckedChange = null,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = TextWhite,
+                checkedTrackColor = BrightCyan,
+                uncheckedThumbColor = TextLightGray,
+                uncheckedTrackColor = BorderGray
+            )
+        )
     }
 }
 
 @Composable
-fun SettingsRowArrow(icon: ImageVector, iconBg: Color, title: String, subtitle: String) {
-    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+fun SettingsRowArrow(
+    icon: ImageVector,
+    iconBg: Color,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit = {} // Added so you can make these buttons do things later
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() } // Makes the row act like a button
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(modifier = Modifier.size(40.dp).background(iconBg, CircleShape), contentAlignment = Alignment.Center) {
                 Icon(icon, null, tint = TextWhite, modifier = Modifier.size(20.dp))

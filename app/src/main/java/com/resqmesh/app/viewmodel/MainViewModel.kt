@@ -7,6 +7,7 @@ import com.resqmesh.app.ConnectivityState
 import com.resqmesh.app.DeliveryStatus
 import com.resqmesh.app.SosType
 import com.resqmesh.app.data.ResQMeshDatabase
+import com.resqmesh.app.data.SettingsRepository
 import com.resqmesh.app.data.SosMessageEntity
 import com.resqmesh.app.data.SosRepository
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -19,18 +20,26 @@ import java.util.UUID
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
-    // Initialize Database and Repository
+    // --- DATABASES & REPOSITORIES ---
     private val database = ResQMeshDatabase.getDatabase(application)
-    private val repository = SosRepository(database.sosDao())
+    private val sosRepository = SosRepository(database.sosDao())
+    private val settingsRepository = SettingsRepository(application) // NEW!
 
-    // UI State: Messages (Automatically updates when DB changes)
-    val sentMessages: StateFlow<List<SosMessageEntity>> = repository.allMessages
+    // --- UI STATE: MESSAGES & CONNECTIVITY ---
+    val sentMessages: StateFlow<List<SosMessageEntity>> = sosRepository.allMessages
         .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
-    // UI State: Connectivity
     private val _connectivity = MutableStateFlow(ConnectivityState.OFFLINE)
     val connectivity = _connectivity.asStateFlow()
 
+    // --- UI STATE: SETTINGS (Now pulled directly from DataStore!) ---
+    val bluetoothEnabled: StateFlow<Boolean> = settingsRepository.bluetoothEnabledFlow
+        .stateIn(viewModelScope, SharingStarted.Lazily, false)
+
+    val wifiDirectEnabled: StateFlow<Boolean> = settingsRepository.wifiEnabledFlow
+        .stateIn(viewModelScope, SharingStarted.Lazily, false)
+
+    // --- ACTIONS ---
     fun sendSos(type: SosType, messageText: String) {
         viewModelScope.launch {
             val newSos = SosMessageEntity(
@@ -40,13 +49,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 timestamp = System.currentTimeMillis(),
                 status = DeliveryStatus.PENDING
             )
-
-            // Save to Room Database offline
-            repository.saveMessage(newSos)
-
-            // Simulate Mesh connection active
+            sosRepository.saveMessage(newSos)
             _connectivity.value = ConnectivityState.MESH_ACTIVE
         }
     }
-}
 
+    fun setBluetoothEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsRepository.saveBluetoothState(enabled) // Saves permanently
+        }
+    }
+
+    fun setWifiDirectEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsRepository.saveWifiState(enabled) // Saves permanently
+        }
+    }
+}
