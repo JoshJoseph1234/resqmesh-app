@@ -1,5 +1,7 @@
 package com.resqmesh.app.ui.theme
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -8,10 +10,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.LocationOn
-import androidx.compose.material.icons.filled.NearMe
-import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -20,6 +19,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -41,10 +41,8 @@ val TextLightGray = Color(0xFFAAAAAA)
 val DeepBlueTint = Color(0xFF0A1E2B)
 val BorderBlueTint = Color(0xFF163B50)
 
-// --- MATH & UTILS ---
-// Calculates meters between two GPS points
 fun getDistanceInMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Int {
-    val r = 6371000.0 // Earth radius in meters
+    val r = 6371000.0
     val dLat = Math.toRadians(lat2 - lat1)
     val dLon = Math.toRadians(lon2 - lon1)
     val a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
@@ -54,100 +52,46 @@ fun getDistanceInMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double):
     return (r * c).toInt()
 }
 
-// Converts Unix timestamp into "3m ago" format
 fun getTimeAgo(timestamp: Long): String {
-    val now = System.currentTimeMillis()
-    val diff = now - timestamp
-    val minutes = TimeUnit.MILLISECONDS.toMinutes(diff)
+    val minutes = TimeUnit.MILLISECONDS.toMinutes(System.currentTimeMillis() - timestamp)
     return if (minutes < 1) "Just now" else "${minutes}m ago"
 }
 
-// Generates "User #A3F9" from the MAC Address / DB ID
-fun getShortId(fullId: String): String {
-    return if (fullId.length >= 4) fullId.takeLast(4).uppercase() else "UNKN"
-}
+fun getShortId(fullId: String) = if (fullId.length >= 4) fullId.takeLast(4).uppercase() else "UNKN"
 
 @Composable
 fun AlertsScreen(viewModel: MainViewModel) {
-    // Read all messages directly from the local Room Database
     val allMessages by viewModel.sentMessages.collectAsState()
-
-    // Filter out our own messages. We only want to see incoming alerts!
     val incomingAlerts = allMessages.filter { it.status == DeliveryStatus.DELIVERED }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(PureBlack) // True AMOLED Black
-            .padding(horizontal = 16.dp)
-    ) {
+    // Fetch REAL location from ViewModel instead of hardcoding!
+    val myLat by viewModel.myCurrentLat.collectAsState()
+    val myLon by viewModel.myCurrentLon.collectAsState()
+
+    Column(modifier = Modifier.fillMaxSize().background(PureBlack).padding(horizontal = 16.dp)) {
         Spacer(modifier = Modifier.height(32.dp))
+        Text("Nearby Alerts", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+        Text("SOS signals in your area", color = TextLightGray, fontSize = 14.sp, modifier = Modifier.padding(bottom = 24.dp, top = 4.dp))
 
-        // --- HEADER ---
-        Text(
-            text = "Nearby Alerts",
-            color = Color.White,
-            fontSize = 24.sp,
-            fontWeight = FontWeight.Bold
-        )
-        Text(
-            text = "SOS signals in your area",
-            color = TextLightGray,
-            fontSize = 14.sp,
-            modifier = Modifier.padding(bottom = 24.dp, top = 4.dp)
-        )
-
-        // --- SUMMARY CARD (The Blue Box) ---
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(8.dp))
-                .background(DeepBlueTint)
-                .border(1.dp, BorderBlueTint, RoundedCornerShape(8.dp))
-                .padding(16.dp)
-        ) {
+        Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(DeepBlueTint).border(1.dp, BorderBlueTint, RoundedCornerShape(8.dp)).padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = Icons.Default.LocationOn,
-                    contentDescription = null,
-                    tint = BrightCyan,
-                    modifier = Modifier.size(28.dp)
-                )
+                Icon(Icons.Default.LocationOn, null, tint = BrightCyan, modifier = Modifier.size(28.dp))
                 Spacer(modifier = Modifier.width(16.dp))
                 Column {
-                    Text(
-                        text = "${incomingAlerts.size} Alerts Detected",
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp
-                    )
-                    Text(
-                        text = "Within 2km radius",
-                        color = BrightCyan,
-                        fontSize = 12.sp
-                    )
+                    Text("${incomingAlerts.size} Alerts Detected", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Text("Within Mesh Range", color = BrightCyan, fontSize = 12.sp)
                 }
             }
         }
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // --- ALERT CARDS LIST ---
         if (incomingAlerts.isEmpty()) {
-            Text(
-                text = "Scanning for nearby emergency signals...",
-                color = TextLightGray,
-                fontSize = 14.sp,
-                modifier = Modifier.align(Alignment.CenterHorizontally),
-                textAlign = TextAlign.Center
-            )
+            Text("Scanning for nearby emergency signals...", color = TextLightGray, fontSize = 14.sp, modifier = Modifier.align(Alignment.CenterHorizontally), textAlign = TextAlign.Center)
         } else {
-            LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-                contentPadding = PaddingValues(bottom = 80.dp) // Leave space for bottom nav bar!
-            ) {
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(16.dp), contentPadding = PaddingValues(bottom = 80.dp)) {
                 items(incomingAlerts) { alert ->
-                    AlertCard(alert)
+                    AlertCard(alert, myLat, myLon)
                 }
             }
         }
@@ -155,18 +99,16 @@ fun AlertsScreen(viewModel: MainViewModel) {
 }
 
 @Composable
-fun AlertCard(alert: SosMessageEntity) {
-    // Fallback coordinates (Kochi) for math representation
-    val myLat = 9.9312
-    val myLon = 76.2673
+fun AlertCard(alert: SosMessageEntity, myLat: Double?, myLon: Double?) {
+    val context = LocalContext.current
 
-    val meters = if (alert.latitude != null && alert.longitude != null) {
+    // Calculates real distance. If location hasn't locked yet, shows 0.
+    val meters = if (alert.latitude != null && alert.longitude != null && myLat != null && myLon != null) {
         getDistanceInMeters(myLat, myLon, alert.latitude, alert.longitude)
     } else {
         0
     }
 
-    // Determine the color of the outline tag based on string match of enum name
     val (tagColor, typeString) = when {
         alert.type.name.contains("MEDICAL") -> Pair(VibrantRed, "Medical Emergency")
         alert.type.name.contains("RESCUE") -> Pair(Amber400, "Need Rescue")
@@ -174,98 +116,59 @@ fun AlertCard(alert: SosMessageEntity) {
         else -> Pair(VibrantRed, alert.type.name.replace("_", " "))
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(DarkGray800)
-            .border(1.dp, BorderGray, RoundedCornerShape(12.dp))
-            .padding(16.dp)
-    ) {
+    Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(DarkGray800).border(1.dp, BorderGray, RoundedCornerShape(12.dp)).padding(16.dp)) {
         Column {
-            // --- TOP ROW: Pill Tag & Distance ---
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Outlined Pill Tag
-                Box(
-                    modifier = Modifier
-                        .border(1.dp, tagColor, RoundedCornerShape(16.dp))
-                        .padding(horizontal = 12.dp, vertical = 4.dp)
-                ) {
-                    Text(
-                        text = typeString,
-                        color = tagColor,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Box(modifier = Modifier.border(1.dp, tagColor, RoundedCornerShape(16.dp)).padding(horizontal = 12.dp, vertical = 4.dp)) {
+                    Text(typeString, color = tagColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
-
-                // Distance Indicator
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.NearMe,
-                        contentDescription = null,
-                        tint = VibrantRed,
-                        modifier = Modifier.size(14.dp)
-                    )
+                    Icon(Icons.Default.NearMe, null, tint = VibrantRed, modifier = Modifier.size(14.dp))
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = "${meters}m",
-                        color = VibrantRed,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Text("${meters}m", color = VibrantRed, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                 }
             }
-
             Spacer(modifier = Modifier.height(16.dp))
-
-            // --- MIDDLE ROW: User ID and Time ---
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Person, contentDescription = null, tint = TextLightGray, modifier = Modifier.size(14.dp))
+                Icon(Icons.Default.Person, null, tint = TextLightGray, modifier = Modifier.size(14.dp))
                 Spacer(modifier = Modifier.width(6.dp))
                 Text("User #${getShortId(alert.id)}", color = TextLightGray, fontSize = 12.sp)
             }
             Spacer(modifier = Modifier.height(4.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Schedule, contentDescription = null, tint = TextLightGray, modifier = Modifier.size(14.dp))
+                Icon(Icons.Default.Schedule, null, tint = TextLightGray, modifier = Modifier.size(14.dp))
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(getTimeAgo(alert.timestamp), color = TextLightGray, fontSize = 12.sp)
             }
-
             Spacer(modifier = Modifier.height(16.dp))
-
-            // --- INNER MESSAGE BOX ---
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(PureBlack)
-                    .padding(12.dp)
-            ) {
-                Text(
-                    text = alert.message,
-                    color = Color.White,
-                    fontSize = 14.sp
-                )
+            Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(PureBlack).padding(12.dp)) {
+                Text(alert.message, color = Color.White, fontSize = 14.sp)
             }
-
             Spacer(modifier = Modifier.height(16.dp))
             HorizontalDivider(color = BorderGray, thickness = 1.dp)
             Spacer(modifier = Modifier.height(12.dp))
 
-            // --- VIEW DETAILS BUTTON ---
+            // THE GOOGLE MAPS INTENT!
             Text(
-                text = "View Details",
+                text = "View Directions",
                 color = BrightCyan,
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { /* TODO: Open Map */ }
+                    .clickable {
+                        if (alert.latitude != null && alert.longitude != null) {
+                            val uri = Uri.parse("google.navigation:q=${alert.latitude},${alert.longitude}")
+                            val mapIntent = Intent(Intent.ACTION_VIEW, uri)
+                            mapIntent.setPackage("com.google.android.apps.maps")
+                            if (mapIntent.resolveActivity(context.packageManager) != null) {
+                                context.startActivity(mapIntent)
+                            } else {
+                                // Fallback to web browser if Maps app isn't installed
+                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://maps.google.com/?q=${alert.latitude},${alert.longitude}")))
+                            }
+                        }
+                    }
                     .padding(vertical = 4.dp),
                 textAlign = TextAlign.Center
             )

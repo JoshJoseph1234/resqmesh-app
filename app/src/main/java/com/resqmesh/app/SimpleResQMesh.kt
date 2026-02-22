@@ -423,11 +423,19 @@ fun SettingsScreen(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
 
         if (allGranted) {
             if (pendingAction == "BLUETOOTH") {
+                // NEW: Force the user to turn on physical Location if it's off!
+                val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as android.location.LocationManager
+                if (!locationManager.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER)) {
+                    Toast.makeText(context, "Please enable GPS Location for Mesh", Toast.LENGTH_LONG).show()
+                    context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+                }
+
                 if (bluetoothAdapter?.isEnabled == false) {
                     val enableBtIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
                     enableBluetoothLauncher.launch(enableBtIntent)
                 } else {
                     viewModel.setBluetoothEnabled(true)
+                    viewModel.kickstartMeshEars() // Kickstart the engine!
                 }
             } else if (pendingAction == "WIFI") {
                 try {
