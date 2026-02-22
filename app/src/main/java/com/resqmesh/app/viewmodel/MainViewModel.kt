@@ -1,10 +1,14 @@
 package com.resqmesh.app.viewmodel
 
+import android.Manifest
 import android.app.Application
+import android.content.pm.PackageManager
+import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.resqmesh.app.ConnectivityState
 import com.resqmesh.app.DeliveryStatus
+import com.resqmesh.app.SendSosResult
 import com.resqmesh.app.SosType
 import com.resqmesh.app.data.ResQMeshDatabase
 import com.resqmesh.app.data.SettingsRepository
@@ -56,16 +60,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val myCurrentLat = MutableStateFlow<Double?>(null)
     val myCurrentLon = MutableStateFlow<Double?>(null)
 
+    private fun hasRequiredPermissions(): Boolean {
+        val context = getApplication<Application>().applicationContext
+        val hasLocation = context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+                context.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val hasBtScan = context.checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED
+            val hasBtAdvertise = context.checkSelfPermission(Manifest.permission.BLUETOOTH_ADVERTISE) == PackageManager.PERMISSION_GRANTED
+            val hasBtConnect = context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
+            hasLocation && hasBtScan && hasBtAdvertise && hasBtConnect
+        } else {
+            hasLocation
+        }
+    }
+
     // --- INITIALIZATION ---
     init {
         viewModelScope.launch {
             bluetoothEnabled.collect { isEnabled ->
-                if (isEnabled) {
-                    // ONLY turn on the ears when the toggle is flipped!
+                if (isEnabled) { // Permission check is now inside BleMeshManager
                     bleMeshManager.startScanning()
                 } else {
-                    bleMeshManager.stopAdvertising() // Stop shouting if we were
-                    bleMeshManager.stopScanning()    // Stop listening
+                    bleMeshManager.stopAdvertising()
+                    bleMeshManager.stopScanning()
                 }
             }
         }
@@ -73,9 +91,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     @SuppressLint("MissingPermission")
     fun kickstartMeshEars() {
-        if (bluetoothEnabled.value) {
+        if (bluetoothEnabled.value) { // Permission check is now inside BleMeshManager
             bleMeshManager.startScanning()
-            // Grab our real GPS coordinates to power the distance math UI
             fusedLocationClient.lastLocation.addOnSuccessListener { location ->
                 location?.let {
                     myCurrentLat.value = it.latitude
@@ -84,12 +101,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
+
     // --- ACTIONS ---
     @SuppressLint("MissingPermission")
-    fun sendSos(type: SosType, messageText: String): Boolean {
-        // 1. HARDWARE BLOCK: Refuse to send if antennas are dead!
+    fun sendSos(type: SosType, messageText: String): SendSosResult {
+        if (messageText.isBlank()) {
+            return SendSosResult.EMPTY_MESSAGE
+        }
+
         if (!isHardwareReady()) {
-            return false
+            return SendSosResult.HARDWARE_NOT_READY
+        }
+
+        if (!hasRequiredPermissions()) {
+            Log.e("MainViewModel", "sendSos called without required permissions!")
+            return SendSosResult.HARDWARE_NOT_READY // This will now be caught by the UI
         }
 
         viewModelScope.launch {
@@ -115,7 +141,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     bleMeshManager.startAdvertising(messageText, 9.9312f, 76.2673f, typeByte)
                 }
         }
-        return true // Successfully fired!
+        return SendSosResult.SUCCESS
     }
 
     fun setBluetoothEnabled(enabled: Boolean) {
@@ -133,8 +159,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // --- MESH NETWORK ROUTING ---
     private fun handleIncomingMeshMessage(lat: Float, lon: Float, typeId: Byte, messageText: String, macAddress: String) {
         viewModelScope.launch {
-
-            // Use our new converter to read the incoming byte!
             val receivedType = byteToType(typeId)
 
             val incomingSos = SosMessageEntity(
@@ -150,10 +174,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             sosRepository.saveMessage(incomingSos)
             Log.d("MainViewModel", "Saved incoming mesh SOS to local database!")
 
-            // RELAY IT: Pass the identical typeId forward so the next phone knows what it is!
             bleMeshManager.startAdvertising(messageText, lat, lon, typeId)
         }
-    }    // --- HELPER CONVERTERS ---
+    }
+
+    // --- HELPER CONVERTERS ---
     private fun typeToByte(type: SosType): Byte = when(type) {
         SosType.MEDICAL -> 1
         SosType.RESCUE -> 2
@@ -171,8 +196,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         5 -> SosType.GENERAL
         else -> SosType.OTHER
     }
+
     // --- HARDWARE MONITORING ---
-    // Checks the actual physical chips, not just the app's preferences
     fun isHardwareReady(): Boolean {
         val btManager = getApplication<Application>().getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         val locManager = getApplication<Application>().getSystemService(Context.LOCATION_SERVICE) as android.location.LocationManager
@@ -183,22 +208,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return isBtOn && isGpsOn
     }
 
-    // Forces the app UI to match the physical hardware state
     @SuppressLint("MissingPermission")
     fun syncHardwareState() {
         val btManager = getApplication<Application>().getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         val isBtOn = btManager.adapter?.isEnabled == true
 
-        // If the hardware changed outside the app, update our Settings UI toggle!
         if (bluetoothEnabled.value != isBtOn) {
             setBluetoothEnabled(isBtOn)
         }
 
-        if (isBtOn) {
-            // Hardware just woke up! Turn the ears back on to catch missed messages!
+        if (isBtOn) { // Permission checks are now inside BleMeshManager
             kickstartMeshEars()
         } else {
-            // Hardware died. Shut down the engine safely.
             bleMeshManager.stopScanning()
             bleMeshManager.stopAdvertising()
         }

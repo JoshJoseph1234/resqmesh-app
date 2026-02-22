@@ -43,6 +43,7 @@ import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.wifi.WifiManager
 import android.provider.Settings
 import androidx.compose.foundation.lazy.LazyRow
@@ -55,6 +56,7 @@ import android.content.IntentFilter
 enum class SosType { MEDICAL, RESCUE, FOOD, TRAPPED, GENERAL, OTHER }
 enum class DeliveryStatus { PENDING, RELAYED, DELIVERED }
 enum class ConnectivityState { OFFLINE, MESH_ACTIVE, INTERNET }
+enum class SendSosResult { SUCCESS, EMPTY_MESSAGE, HARDWARE_NOT_READY }
 
 data class SosMessage(
     val id: String = UUID.randomUUID().toString(),
@@ -120,6 +122,11 @@ fun HardwareStateMonitor(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
 @Composable
 fun SimpleResQMeshApp(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
     val navController = rememberNavController()
+
+    // Check hardware state once when the app starts up
+    LaunchedEffect(Unit) {
+        viewModel.syncHardwareState()
+    }
 
     HardwareStateMonitor(viewModel)
 
@@ -200,14 +207,13 @@ fun SimpleResQMeshApp(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
 @Composable
 fun HomeScreen(
     connectivity: ConnectivityState,
-    onSendSos: (SosType, String) -> Boolean
+    onSendSos: (SosType, String) -> SendSosResult
 ) {
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val context = LocalContext.current
     var selectedType by remember { mutableStateOf(SosType.GENERAL) }
     var messageText by remember { mutableStateOf("") }
     var expanded by remember { mutableStateOf(false) }
 
-    // Our mathematically safe quick replies (All under 18 chars)
     val quickReplies = listOf(
         "Medical Emergency",
         "Trapped in debris",
@@ -215,6 +221,52 @@ fun HomeScreen(
         "Need water/food",
         "Send Rescue"
     )
+
+    val sendAction = {
+        val result = onSendSos(selectedType, messageText)
+        when (result) {
+            SendSosResult.SUCCESS -> {
+                Toast.makeText(context, "SOS Message Broadcasting!", Toast.LENGTH_SHORT).show()
+                selectedType = SosType.GENERAL
+                messageText = ""
+                expanded = false
+            }
+            SendSosResult.EMPTY_MESSAGE -> {
+                Toast.makeText(context, "FAILED: Message cannot be empty.", Toast.LENGTH_LONG).show()
+            }
+            SendSosResult.HARDWARE_NOT_READY -> {
+                Toast.makeText(context, "FAILED: Please turn on Bluetooth and GPS Location!", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    val permissionsToRequest = remember {
+        mutableListOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        ).apply {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                add(Manifest.permission.BLUETOOTH_SCAN)
+                add(Manifest.permission.BLUETOOTH_ADVERTISE)
+                add(Manifest.permission.BLUETOOTH_CONNECT)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                add(Manifest.permission.NEARBY_WIFI_DEVICES)
+            }
+        }.toTypedArray()
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissionsMap ->
+        val allGranted = permissionsMap.values.all { it }
+        if (allGranted) {
+            sendAction()
+        } else {
+            Toast.makeText(context, "Permissions required for Mesh Networking", Toast.LENGTH_LONG).show()
+        }
+    }
+
     Column(modifier = Modifier.fillMaxSize().background(PureBlack)) {
         // TOP HEADER
         Column(
@@ -291,8 +343,11 @@ fun HomeScreen(
                 OutlinedTextField(
                     value = messageText,
                     onValueChange = { newText ->
-                        if (newText.length <= 18) {
-                            messageText = newText
+                        val filteredText = newText.filter {
+                            it.isLetterOrDigit() || it.isWhitespace() || it in ".,'?!-()/"
+                        }
+                        if (filteredText.length <= 18) {
+                            messageText = filteredText
                         }
                     },
                     label = { Text("Custom Message (Optional)", color = TextLightGray) },
@@ -321,17 +376,13 @@ fun HomeScreen(
             Column {
                 Button(
                     onClick = {
-                        // Check if the ViewModel successfully fired the message
-                        val success = onSendSos(selectedType, messageText)
-
-                        if (success) {
-                            Toast.makeText(context, "SOS Message Broadcasting!", Toast.LENGTH_SHORT).show()
-                            selectedType = SosType.GENERAL
-                            messageText = ""
-                            expanded = false
+                        val allPermissionsGranted = permissionsToRequest.all {
+                            context.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED
+                        }
+                        if (allPermissionsGranted) {
+                            sendAction()
                         } else {
-                            // Hardware is off! Stop them and warn them!
-                            Toast.makeText(context, "FAILED: Please turn on Bluetooth and GPS Location!", Toast.LENGTH_LONG).show()
+                            permissionLauncher.launch(permissionsToRequest)
                         }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = VibrantRed),
@@ -456,7 +507,7 @@ fun SettingsScreen(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { permissionsMap ->
-        val allGranted = permissionsMap.values.all { it == true }
+        val allGranted = permissionsMap.values.all { it }
 
         if (allGranted) {
             if (pendingAction == "BLUETOOTH") {
