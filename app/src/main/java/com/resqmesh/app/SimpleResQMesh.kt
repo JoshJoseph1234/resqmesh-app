@@ -49,6 +49,10 @@ import android.provider.Settings
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.ui.graphics.Color.Companion.DarkGray
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import android.content.BroadcastReceiver
 import android.content.IntentFilter
 
@@ -77,7 +81,8 @@ val BorderGray = Color(0xFF2C2C35)
 val TextWhite = Color(0xFFFFFFFF)
 val TextLightGray = Color(0xFFA0A0AB)
 val AmberText = Color(0xFFFFB300)
-val AmberBg = Color(0xFF332200)
+val AmberBg =
+    Color(0xFF332200)
 
 // New Colors for Settings & Status
 val SuccessGreen = Color(0xFF00E676)
@@ -177,7 +182,9 @@ fun SimpleResQMeshApp(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
         NavHost(
             navController = navController,
             startDestination = "home",
-            modifier = Modifier.padding(innerPadding).background(PureBlack)
+            modifier = Modifier
+                .padding(innerPadding)
+                .background(PureBlack)
         ) {
             composable("home") {
                 HomeScreen(
@@ -213,6 +220,8 @@ fun HomeScreen(
     var selectedType by remember { mutableStateOf(SosType.GENERAL) }
     var messageText by remember { mutableStateOf("") }
     var expanded by remember { mutableStateOf(false) }
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
 
     val quickReplies = listOf(
         "Medical Emergency",
@@ -230,6 +239,7 @@ fun HomeScreen(
                 selectedType = SosType.GENERAL
                 messageText = ""
                 expanded = false
+                focusManager.clearFocus()
             }
             SendSosResult.EMPTY_MESSAGE -> {
                 Toast.makeText(context, "FAILED: Message cannot be empty.", Toast.LENGTH_LONG).show()
@@ -267,16 +277,32 @@ fun HomeScreen(
         }
     }
 
-    Column(modifier = Modifier.fillMaxSize().background(PureBlack)) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(PureBlack)
+            .pointerInput(Unit) {
+                detectTapGestures(onTap = {
+                    keyboardController?.hide()
+                    focusManager.clearFocus()
+                })
+            }
+    ) {
         // TOP HEADER
         Column(
-            modifier = Modifier.fillMaxWidth().background(HeaderBlue).padding(horizontal = 24.dp, vertical = 32.dp)
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(HeaderBlue)
+                .padding(horizontal = 24.dp, vertical = 32.dp)
         ) {
             Text("ResQMesh", color = TextWhite, fontSize = 28.sp, fontWeight = FontWeight.Bold)
             Text("Emergency Response Network", color = Color(0xFF8C9EFF), fontSize = 14.sp)
             Spacer(Modifier.height(24.dp))
             Row(
-                modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(DarkCyanBg).padding(horizontal = 16.dp, vertical = 10.dp),
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(DarkCyanBg)
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Icon(Icons.Default.Wifi, null, tint = BrightCyan, modifier = Modifier.size(18.dp))
@@ -286,7 +312,9 @@ fun HomeScreen(
         }
 
         // FORM SECTION
-        Column(modifier = Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.SpaceBetween) {
+        Column(modifier = Modifier
+            .fillMaxSize()
+            .padding(24.dp), verticalArrangement = Arrangement.SpaceBetween) {
             Column {
                 Text("Emergency Type", color = TextWhite, fontSize = 14.sp, modifier = Modifier.padding(bottom = 8.dp))
                 ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }) {
@@ -294,7 +322,9 @@ fun HomeScreen(
                         value = selectedType.name.replace("_", " "),
                         onValueChange = {}, readOnly = true,
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-                        modifier = Modifier.menuAnchor().fillMaxWidth(),
+                        modifier = Modifier
+                            .menuAnchor()
+                            .fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp),
                         colors = OutlinedTextFieldDefaults.colors(
                             unfocusedContainerColor = InputGrayBg, focusedContainerColor = InputGrayBg,
@@ -320,7 +350,9 @@ fun HomeScreen(
 
                 LazyRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 16.dp)
                 ) {
                     items(quickReplies) { reply ->
                         Box(
@@ -386,7 +418,9 @@ fun HomeScreen(
                         }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = VibrantRed),
-                    shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth().height(56.dp)
+                    shape = RoundedCornerShape(12.dp), modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp)
                 ) {
                     Icon(Icons.Default.Warning, null, tint = TextWhite)
                     Spacer(Modifier.width(12.dp))
@@ -395,7 +429,12 @@ fun HomeScreen(
                     Icon(Icons.Default.Send, null, tint = TextWhite)
                 }
                 Spacer(Modifier.height(16.dp))
-                Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(AmberBg).border(1.dp, AmberText.copy(alpha = 0.5f), RoundedCornerShape(8.dp)).padding(16.dp)) {
+                Box(modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(AmberBg)
+                    .border(1.dp, AmberText.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+                    .padding(16.dp)) {
                     Text("Note: Your SOS will be broadcast to nearby devices and emergency responders.", color = AmberText, fontSize = 13.sp, lineHeight = 18.sp)
                 }
             }
@@ -565,8 +604,6 @@ fun SettingsScreen(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
                         if (isChecked) {
                             pendingAction = "BLUETOOTH"
                             permissionLauncher.launch(permissionsToRequest)
-                        } else {
-                            viewModel.setBluetoothEnabled(false)
                         }
                     }
                 )
