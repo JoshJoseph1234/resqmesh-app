@@ -9,7 +9,7 @@ import android.util.Log
 import java.util.UUID
 
 @SuppressLint("MissingPermission")
-class BleMeshManager(context: Context) {
+class BleMeshManager(context: Context, private val onMessageReceived: (lat: Float, lon: Float, type: Byte, message: String, macAddress: String) -> Unit) {
 
     private val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
     private val bluetoothAdapter = bluetoothManager.adapter
@@ -147,14 +147,18 @@ class BleMeshManager(context: Context) {
 
                         // 4. Print the decoded SOS to our Logcat!
                         Log.d("BleMesh", """
-                            =================================
                             🚨 INCOMING SOS RECEIVED! 🚨
                             From MAC: ${device.address}
-                            Location: $receivedLat, $receivedLon
-                            Type ID: $receivedType
-                            Message: $receivedMessage
-                            =================================
                         """.trimIndent())
+
+                        // 5. SEND IT ACROSS THE BRIDGE TO THE VIEWMODEL!
+                        onMessageReceived(
+                            receivedLat,
+                            receivedLon,
+                            receivedType,
+                            receivedMessage,
+                            device.address
+                        )
 
                     } catch (e: Exception) {
                         Log.e("BleMesh", "Error unpacking payload: ${e.message}")

@@ -13,7 +13,9 @@ data class SosMessageEntity(
     val type: SosType,
     val message: String,
     val timestamp: Long,
-    val status: DeliveryStatus
+    val status: DeliveryStatus,
+    val latitude: Double? = null,
+    val longitude: Double? = null
 )
 
 // 2. Type Converters (Now with explicit return types for KSP)

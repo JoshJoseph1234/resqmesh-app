@@ -8,9 +8,8 @@ import com.resqmesh.app.DeliveryStatus
 import com.resqmesh.app.SosType
 import com.resqmesh.app.data.ResQMeshDatabase
 import com.resqmesh.app.data.SettingsRepository
-import com.resqmesh.app.data.SosMessageEntity
 import com.resqmesh.app.data.SosRepository
-import com.resqmesh.app.network.BleMeshManager // <-- This import prevents red lines!
+import com.resqmesh.app.network.BleMeshManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -19,8 +18,10 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.util.UUID
 import android.annotation.SuppressLint
+import android.util.Log
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
+import com.resqmesh.app.data.SosMessageEntity
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -30,8 +31,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val settingsRepository = SettingsRepository(application)
 
     // --- THE MESH ENGINE ---
-    private val bleMeshManager = BleMeshManager(application)
+    private val bleMeshManager = BleMeshManager(application) { lat, lon, type, message, macAddress ->
+        handleIncomingMeshMessage(lat, lon, type, message, macAddress)
+    }
     private val fusedLocationClient = LocationServices.getFusedLocationProviderClient(application)
+
     // --- UI STATE: MESSAGES & CONNECTIVITY ---
     val sentMessages: StateFlow<List<SosMessageEntity>> = sosRepository.allMessages
         .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
@@ -61,32 +65,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    @SuppressLint("MissingPermission") // Safe because we requested it in SettingsScreen
-    private fun startMeshWithLiveLocation() {
-        // Ask the phone's GPS for an immediate, high-accuracy reading
-        fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
-            .addOnSuccessListener { location ->
-                if (location != null) {
-                    // We got a GPS lock! Shout the real coordinates.
-                    bleMeshManager.startAdvertising(
-                        messageText = "Help needed!",
-                        lat = location.latitude.toFloat(),
-                        lon = location.longitude.toFloat()
-                    )
-                } else {
-                    // GPS is still warming up. We will default to 9.9312, 76.2673 for now
-                    // so it falls back somewhere familiar while testing.
-                    bleMeshManager.startAdvertising("Help needed!", 9.9312f, 76.2673f)
-                }
-                bleMeshManager.startScanning() // Turn on the ears
-            }
-            .addOnFailureListener {
-                // If the location hardware completely fails, still broadcast the SOS
-                bleMeshManager.startAdvertising("Help needed!", 9.9312f, 76.2673f)
-                bleMeshManager.startScanning()
-            }
-    }
-
+    // --- ACTIONS ---
     @SuppressLint("MissingPermission")
     fun sendSos(type: SosType, messageText: String) {
         viewModelScope.launch {
@@ -129,6 +108,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setWifiDirectEnabled(enabled: Boolean) {
         viewModelScope.launch {
             settingsRepository.saveWifiState(enabled)
+        }
+    }
+
+    // --- MESH NETWORK ROUTING ---
+    private fun handleIncomingMeshMessage(lat: Float, lon: Float, typeId: Byte, messageText: String, macAddress: String) {
+        viewModelScope.launch {
+
+            // 1. Convert the raw Byte back into our SosType enum
+            val receivedType = if (typeId == 1.toByte()) SosType.MEDICAL else SosType.OTHER
+
+            // 2. Package it into a database entity
+            val incomingSos = SosMessageEntity(
+                id = macAddress, // Prevents database spam! Overwrites the old location.
+                type = receivedType,
+                message = messageText,
+                timestamp = System.currentTimeMillis(),
+                status = DeliveryStatus.DELIVERED, // Mark it as an incoming alert
+                latitude = lat.toDouble(),
+                longitude = lon.toDouble()
+            )
+
+            // 3. Save it permanently to the Room Database
+            sosRepository.saveMessage(incomingSos)
+
+            // Optional: If you want to log that it saved successfully
+            Log.d("MainViewModel", "Saved incoming mesh SOS to local database!")
         }
     }
 }

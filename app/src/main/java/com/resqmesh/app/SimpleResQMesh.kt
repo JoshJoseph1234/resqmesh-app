@@ -1,6 +1,5 @@
 package com.resqmesh.app
 
-
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -51,7 +50,7 @@ import androidx.compose.ui.graphics.Color.Companion.DarkGray
 import androidx.compose.ui.text.style.TextAlign
 
 // --- DATA MODELS ---
-enum class SosType { MEDICAL, RESCUE, FOOD, TRAPPED, GENERAL }
+enum class SosType { MEDICAL, RESCUE, FOOD, TRAPPED, GENERAL, OTHER }
 enum class DeliveryStatus { PENDING, RELAYED, DELIVERED }
 enum class ConnectivityState { OFFLINE, MESH_ACTIVE, INTERNET }
 
@@ -97,10 +96,11 @@ fun SimpleResQMeshApp(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
     val sentMessages by viewModel.sentMessages.collectAsState()
     val connectivity by viewModel.connectivity.collectAsState()
 
-    // 3-Tab Layout (Alerts removed)
+    // 4-Tab Layout (Home, Alerts, Status, Settings)
     val items = listOf(
-        Screen("home", "SOS", Icons.Default.Warning),
-        Screen("status", "Messages", Icons.Default.MailOutline),
+        Screen("home", "Home", Icons.Default.Home),
+        Screen("alerts", "Alerts", Icons.Default.Warning),
+        Screen("status", "Status", Icons.Default.MailOutline),
         Screen("settings", "Settings", Icons.Default.Settings)
     )
 
@@ -118,8 +118,8 @@ fun SimpleResQMeshApp(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
                             label = { Text(screen.title, fontSize = 10.sp) },
                             selected = currentRoute == screen.route,
                             colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = VibrantRed,
-                                selectedTextColor = VibrantRed,
+                                selectedIconColor = BrightCyan, // Updated to match Figma Cyan
+                                selectedTextColor = BrightCyan,
                                 unselectedIconColor = TextLightGray,
                                 unselectedTextColor = TextLightGray,
                                 indicatorColor = PureBlack
@@ -148,14 +148,17 @@ fun SimpleResQMeshApp(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
                     onSendSos = { type, msg -> viewModel.sendSos(type, msg) }
                 )
             }
+            // NEW: Added the Alerts Screen Route!
+            composable("alerts") {
+                com.resqmesh.app.ui.theme.AlertsScreen(viewModel = viewModel)
+            }
             composable("status") {
                 StatusScreen(messages = sentMessages.map {
                     SosMessage(it.id, it.type, it.message, it.timestamp, it.status)
                 })
             }
             composable("settings") {
-                    SettingsScreen(viewModel = viewModel)
-
+                SettingsScreen(viewModel = viewModel)
             }
         }
     }
@@ -173,7 +176,8 @@ fun HomeScreen(
     var selectedType by remember { mutableStateOf(SosType.GENERAL) }
     var messageText by remember { mutableStateOf("") }
     var expanded by remember { mutableStateOf(false) }
-// Our mathematically safe quick replies (All under 18 chars)
+
+    // Our mathematically safe quick replies (All under 18 chars)
     val quickReplies = listOf(
         "Medical Emergency",
         "Trapped in debris",
@@ -240,9 +244,8 @@ fun HomeScreen(
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(16.dp))
-                                // Highlights Cyan if selected, stays Dark Gray if not
                                 .background(if (messageText == reply) BrightCyan else Color(0xFF1E1E1E))
-                                .clickable { messageText = reply } // Fills the text box instantly!
+                                .clickable { messageText = reply }
                                 .padding(horizontal = 16.dp, vertical = 8.dp)
                         ) {
                             Text(
@@ -258,7 +261,6 @@ fun HomeScreen(
                 OutlinedTextField(
                     value = messageText,
                     onValueChange = { newText ->
-                        // Only update if it's 18 characters or less!
                         if (newText.length <= 18) {
                             messageText = newText
                         }
@@ -274,7 +276,6 @@ fun HomeScreen(
                         focusedTextColor = TextWhite,
                         unfocusedTextColor = TextWhite
                     ),
-                    // Adds the character counter to the bottom right!
                     supportingText = {
                         Text(
                             text = "${messageText.length} / 18",
@@ -385,7 +386,6 @@ fun SettingsScreen(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
     val bluetoothEnabled by viewModel.bluetoothEnabled.collectAsState()
     val wifiDirectEnabled by viewModel.wifiDirectEnabled.collectAsState()
 
-    // NEW: Memory to track WHICH button was pressed
     var pendingAction by remember { mutableStateOf("") }
 
     val enableBluetoothLauncher = rememberLauncherForActivityResult(
@@ -422,7 +422,6 @@ fun SettingsScreen(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
         val allGranted = permissionsMap.values.all { it == true }
 
         if (allGranted) {
-            // We check WHICH button fired the request
             if (pendingAction == "BLUETOOTH") {
                 if (bluetoothAdapter?.isEnabled == false) {
                     val enableBtIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
@@ -432,7 +431,6 @@ fun SettingsScreen(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
                 }
             } else if (pendingAction == "WIFI") {
                 try {
-                    // Check if Wi-Fi is actually on (Now safe because we added the permission!)
                     if (!wifiManager.isWifiEnabled) {
                         Toast.makeText(context, "Please turn on Wi-Fi for Mesh Networking", Toast.LENGTH_LONG).show()
                         val wifiIntent = Intent(Settings.ACTION_WIFI_SETTINGS)
@@ -440,7 +438,6 @@ fun SettingsScreen(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
                     }
                     viewModel.setWifiDirectEnabled(true)
                 } catch (e: Exception) {
-                    // If the phone blocks us or the settings page is missing, catch the crash!
                     Toast.makeText(context, "Could not access Wi-Fi hardware", Toast.LENGTH_SHORT).show()
                     viewModel.setWifiDirectEnabled(false)
                 }
@@ -450,7 +447,6 @@ fun SettingsScreen(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
             if (pendingAction == "WIFI") viewModel.setWifiDirectEnabled(false)
             Toast.makeText(context, "Permissions required for Mesh Networking", Toast.LENGTH_LONG).show()
         }
-        // Reset the action
         pendingAction = ""
     }
 
@@ -471,7 +467,7 @@ fun SettingsScreen(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
                     checked = bluetoothEnabled,
                     onCheckedChange = { isChecked ->
                         if (isChecked) {
-                            pendingAction = "BLUETOOTH" // Flag it!
+                            pendingAction = "BLUETOOTH"
                             permissionLauncher.launch(permissionsToRequest)
                         } else {
                             viewModel.setBluetoothEnabled(false)
@@ -485,7 +481,7 @@ fun SettingsScreen(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
                     checked = wifiDirectEnabled,
                     onCheckedChange = { isChecked ->
                         if (isChecked) {
-                            pendingAction = "WIFI" // Flag it!
+                            pendingAction = "WIFI"
                             permissionLauncher.launch(permissionsToRequest)
                         } else {
                             viewModel.setWifiDirectEnabled(false)
@@ -502,7 +498,6 @@ fun SettingsScreen(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
 
                 Spacer(Modifier.height(32.dp))
 
-                // Info Cards
                 Box(modifier = Modifier.fillMaxWidth().background(InfoCardBlueBg, RoundedCornerShape(12.dp)).padding(16.dp)) {
                     Column {
                         Text("About ResQMesh", color = BrightCyan, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
@@ -521,7 +516,7 @@ fun SettingsScreen(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
         }
     }
 }
-// Helper components for Settings
+
 @Composable
 fun SettingsRowToggle(
     icon: ImageVector,
@@ -534,8 +529,8 @@ fun SettingsRowToggle(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onCheckedChange(!checked) } // Makes the whole row clickable
-            .padding(vertical = 8.dp), // Adds breathing room for easier tapping
+            .clickable { onCheckedChange(!checked) }
+            .padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
@@ -549,7 +544,6 @@ fun SettingsRowToggle(
                 Text(subtitle, color = TextLightGray, fontSize = 12.sp)
             }
         }
-        // Switch's internal click is disabled (null) so the Row handles the tap smoothly
         Switch(
             checked = checked,
             onCheckedChange = null,
@@ -569,12 +563,12 @@ fun SettingsRowArrow(
     iconBg: Color,
     title: String,
     subtitle: String,
-    onClick: () -> Unit = {} // Added so you can make these buttons do things later
+    onClick: () -> Unit = {}
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onClick() } // Makes the row act like a button
+            .clickable { onClick() }
             .padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
