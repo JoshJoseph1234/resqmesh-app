@@ -18,6 +18,8 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.util.UUID
 import android.annotation.SuppressLint
+import android.bluetooth.BluetoothManager
+import android.content.Context
 import android.util.Log
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
@@ -84,7 +86,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
     // --- ACTIONS ---
     @SuppressLint("MissingPermission")
-    fun sendSos(type: SosType, messageText: String) {
+    fun sendSos(type: SosType, messageText: String): Boolean {
+        // 1. HARDWARE BLOCK: Refuse to send if antennas are dead!
+        if (!isHardwareReady()) {
+            return false
+        }
+
         viewModelScope.launch {
             val newSos = SosMessageEntity(
                 id = UUID.randomUUID().toString(),
@@ -96,23 +103,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             sosRepository.saveMessage(newSos)
             _connectivity.value = ConnectivityState.MESH_ACTIVE
 
-            if (bluetoothEnabled.value) {
-                // Convert the SosType to a Byte!
-                val typeByte = typeToByte(type)
+            val typeByte = typeToByte(type)
 
-                fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
-                    .addOnSuccessListener { location ->
-                        val lat = location?.latitude?.toFloat() ?: 9.9312f
-                        val lon = location?.longitude?.toFloat() ?: 76.2673f
-                        // Pass the typeByte!
-                        bleMeshManager.startAdvertising(messageText, lat, lon, typeByte)
-                    }
-                    .addOnFailureListener {
-                        // Pass the typeByte!
-                        bleMeshManager.startAdvertising(messageText, 9.9312f, 76.2673f, typeByte)
-                    }
-            }
+            fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
+                .addOnSuccessListener { location ->
+                    val lat = location?.latitude?.toFloat() ?: 9.9312f
+                    val lon = location?.longitude?.toFloat() ?: 76.2673f
+                    bleMeshManager.startAdvertising(messageText, lat, lon, typeByte)
+                }
+                .addOnFailureListener {
+                    bleMeshManager.startAdvertising(messageText, 9.9312f, 76.2673f, typeByte)
+                }
         }
+        return true // Successfully fired!
     }
 
     fun setBluetoothEnabled(enabled: Boolean) {
@@ -167,5 +170,37 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         4 -> SosType.TRAPPED
         5 -> SosType.GENERAL
         else -> SosType.OTHER
+    }
+    // --- HARDWARE MONITORING ---
+    // Checks the actual physical chips, not just the app's preferences
+    fun isHardwareReady(): Boolean {
+        val btManager = getApplication<Application>().getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+        val locManager = getApplication<Application>().getSystemService(Context.LOCATION_SERVICE) as android.location.LocationManager
+
+        val isBtOn = btManager.adapter?.isEnabled == true
+        val isGpsOn = locManager.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER)
+
+        return isBtOn && isGpsOn
+    }
+
+    // Forces the app UI to match the physical hardware state
+    @SuppressLint("MissingPermission")
+    fun syncHardwareState() {
+        val btManager = getApplication<Application>().getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+        val isBtOn = btManager.adapter?.isEnabled == true
+
+        // If the hardware changed outside the app, update our Settings UI toggle!
+        if (bluetoothEnabled.value != isBtOn) {
+            setBluetoothEnabled(isBtOn)
+        }
+
+        if (isBtOn) {
+            // Hardware just woke up! Turn the ears back on to catch missed messages!
+            kickstartMeshEars()
+        } else {
+            // Hardware died. Shut down the engine safely.
+            bleMeshManager.stopScanning()
+            bleMeshManager.stopAdvertising()
+        }
     }
 }

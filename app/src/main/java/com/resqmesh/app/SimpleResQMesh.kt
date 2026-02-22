@@ -48,6 +48,8 @@ import android.provider.Settings
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.ui.graphics.Color.Companion.DarkGray
 import androidx.compose.ui.text.style.TextAlign
+import android.content.BroadcastReceiver
+import android.content.IntentFilter
 
 // --- DATA MODELS ---
 enum class SosType { MEDICAL, RESCUE, FOOD, TRAPPED, GENERAL, OTHER }
@@ -87,11 +89,39 @@ val IconGrayBg = Color(0xFF424242)
 val InfoCardBlueBg = Color(0xFF1A237E)
 val InfoCardRedBg = Color(0xFF3E1010)
 
+
+
+@Composable
+fun HardwareStateMonitor(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
+    val context = LocalContext.current
+
+    DisposableEffect(Unit) {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                // When the OS announces Bluetooth or GPS changed, tell the ViewModel!
+                viewModel.syncHardwareState()
+            }
+        }
+
+        val filter = IntentFilter().apply {
+            addAction(BluetoothAdapter.ACTION_STATE_CHANGED)
+            addAction(android.location.LocationManager.PROVIDERS_CHANGED_ACTION)
+        }
+
+        context.registerReceiver(receiver, filter)
+
+        onDispose {
+            context.unregisterReceiver(receiver)
+        }
+    }
+}
 // --- MAIN SCREEN & NAVIGATION ---
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SimpleResQMeshApp(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
     val navController = rememberNavController()
+
+    HardwareStateMonitor(viewModel)
 
     val sentMessages by viewModel.sentMessages.collectAsState()
     val connectivity by viewModel.connectivity.collectAsState()
@@ -170,7 +200,7 @@ fun SimpleResQMeshApp(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
 @Composable
 fun HomeScreen(
     connectivity: ConnectivityState,
-    onSendSos: (SosType, String) -> Unit
+    onSendSos: (SosType, String) -> Boolean
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var selectedType by remember { mutableStateOf(SosType.GENERAL) }
@@ -291,11 +321,18 @@ fun HomeScreen(
             Column {
                 Button(
                     onClick = {
-                        onSendSos(selectedType, messageText)
-                        android.widget.Toast.makeText(context, "SOS Message Sent!", android.widget.Toast.LENGTH_SHORT).show()
-                        selectedType = SosType.GENERAL
-                        messageText = ""
-                        expanded = false
+                        // Check if the ViewModel successfully fired the message
+                        val success = onSendSos(selectedType, messageText)
+
+                        if (success) {
+                            Toast.makeText(context, "SOS Message Broadcasting!", Toast.LENGTH_SHORT).show()
+                            selectedType = SosType.GENERAL
+                            messageText = ""
+                            expanded = false
+                        } else {
+                            // Hardware is off! Stop them and warn them!
+                            Toast.makeText(context, "FAILED: Please turn on Bluetooth and GPS Location!", Toast.LENGTH_LONG).show()
+                        }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = VibrantRed),
                     shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth().height(56.dp)
