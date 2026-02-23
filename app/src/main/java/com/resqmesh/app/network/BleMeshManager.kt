@@ -1,32 +1,36 @@
 package com.resqmesh.app.network
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothManager
 import android.bluetooth.le.*
 import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.ParcelUuid
 import android.util.Log
 import java.util.UUID
 
 @SuppressLint("MissingPermission")
 class BleMeshManager(
-    context: Context,
+    private val context: Context, // Add context to check permissions
     private val onMessageReceived: (lat: Float, lon: Float, type: Byte, message: String, macAddress: String) -> Unit
 ) {
     private val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
 
-    // THE FIX: Using "get() =" forces Android to check the actual hardware right now,
-    // instead of caching a "null" value from when the app first launched!
     private val bleAdapter get() = bluetoothManager.adapter
     private val bleScanner get() = bleAdapter?.bluetoothLeScanner
     private val bleAdvertiser get() = bleAdapter?.bluetoothLeAdvertiser
 
-    // The Memory Cache! This stops the infinite loop spam.
     private val processedHashes = mutableSetOf<Int>()
 
     companion object {
         val RESQMESH_SERVICE_UUID: ParcelUuid = ParcelUuid(UUID.fromString("87bd42f3-189f-4408-9bd3-07cb1bf6119f"))
         const val MANUFACTURER_ID = 0xFFFF
+    }
+
+    private fun hasPermission(permission: String): Boolean {
+        return context.checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
     }
 
     private fun packSosPayload(lat: Float, lon: Float, emergencyType: Byte, message: String): ByteArray {
@@ -39,8 +43,12 @@ class BleMeshManager(
         return buffer.array()
     }
 
-    // 1. We added 'typeId: Byte' to the parameters so it's no longer hardcoded!
     fun startAdvertising(messageText: String, lat: Float, lon: Float, typeId: Byte) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !hasPermission(Manifest.permission.BLUETOOTH_ADVERTISE)) {
+            Log.e("BleMesh", "Attempted to advertise without BLUETOOTH_ADVERTISE permission")
+            return
+        }
+
         if (bleAdvertiser == null) {
             Log.e("BleMesh", "CRITICAL ERROR: Advertiser is null! Is Bluetooth actually ON?")
             return
@@ -61,10 +69,7 @@ class BleMeshManager(
             .addServiceUuid(RESQMESH_SERVICE_UUID)
             .build()
 
-        // 2. Pass the real typeId instead of a hardcoded '1'
         val payloadBytes = packSosPayload(lat, lon, typeId, messageText)
-
-        // 3. THE ECHO FIX: Add our OWN message to the ignore list so we don't catch it when it bounces back!
         processedHashes.add(payloadBytes.contentHashCode())
 
         val scanResponseData = AdvertiseData.Builder()
@@ -73,11 +78,20 @@ class BleMeshManager(
 
         bleAdvertiser?.startAdvertising(settings, advertiseData, scanResponseData, advertiseCallback)
     }
+
     fun stopAdvertising() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !hasPermission(Manifest.permission.BLUETOOTH_ADVERTISE)) {
+             return // Don't even try if we don't have permission
+        }
         bleAdvertiser?.stopAdvertising(advertiseCallback)
     }
 
     fun startScanning() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !hasPermission(Manifest.permission.BLUETOOTH_SCAN)) {
+            Log.e("BleMesh", "Attempted to scan without BLUETOOTH_SCAN permission")
+            return
+        }
+
         if (bleScanner == null) {
             Log.e("BleMesh", "CRITICAL ERROR: Scanner is null! Is Bluetooth actually ON?")
             return
@@ -92,6 +106,9 @@ class BleMeshManager(
     }
 
     fun stopScanning() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !hasPermission(Manifest.permission.BLUETOOTH_SCAN)) {
+            return // Don't even try if we don't have permission
+        }
         bleScanner?.stopScan(scanCallback)
     }
 
@@ -110,13 +127,8 @@ class BleMeshManager(
                 val payloadBytes = result.scanRecord?.getManufacturerSpecificData(MANUFACTURER_ID)
 
                 if (payloadBytes != null && payloadBytes.size >= 9) {
-                    // Create a mathematical hash of the payload to check for duplicates
                     val payloadHash = payloadBytes.contentHashCode()
-
-                    // If we already saw this exact message, ignore it completely!
                     if (processedHashes.contains(payloadHash)) return
-
-                    // It's a brand new message! Add it to cache so we don't spam.
                     processedHashes.add(payloadHash)
 
                     try {

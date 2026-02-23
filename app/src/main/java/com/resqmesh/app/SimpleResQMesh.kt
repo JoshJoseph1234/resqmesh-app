@@ -43,11 +43,16 @@ import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.wifi.WifiManager
 import android.provider.Settings
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.ui.graphics.Color.Companion.DarkGray
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import android.content.BroadcastReceiver
 import android.content.IntentFilter
 
@@ -55,6 +60,7 @@ import android.content.IntentFilter
 enum class SosType { MEDICAL, RESCUE, FOOD, TRAPPED, GENERAL, OTHER }
 enum class DeliveryStatus { PENDING, RELAYED, DELIVERED }
 enum class ConnectivityState { OFFLINE, MESH_ACTIVE, INTERNET }
+enum class SendSosResult { SUCCESS, EMPTY_MESSAGE, HARDWARE_NOT_READY }
 
 data class SosMessage(
     val id: String = UUID.randomUUID().toString(),
@@ -75,7 +81,8 @@ val BorderGray = Color(0xFF2C2C35)
 val TextWhite = Color(0xFFFFFFFF)
 val TextLightGray = Color(0xFFA0A0AB)
 val AmberText = Color(0xFFFFB300)
-val AmberBg = Color(0xFF332200)
+val AmberBg =
+    Color(0xFF332200)
 
 // New Colors for Settings & Status
 val SuccessGreen = Color(0xFF00E676)
@@ -120,6 +127,11 @@ fun HardwareStateMonitor(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
 @Composable
 fun SimpleResQMeshApp(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
     val navController = rememberNavController()
+
+    // Check hardware state once when the app starts up
+    LaunchedEffect(Unit) {
+        viewModel.syncHardwareState()
+    }
 
     HardwareStateMonitor(viewModel)
 
@@ -170,7 +182,9 @@ fun SimpleResQMeshApp(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
         NavHost(
             navController = navController,
             startDestination = "home",
-            modifier = Modifier.padding(innerPadding).background(PureBlack)
+            modifier = Modifier
+                .padding(innerPadding)
+                .background(PureBlack)
         ) {
             composable("home") {
                 HomeScreen(
@@ -200,14 +214,15 @@ fun SimpleResQMeshApp(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
 @Composable
 fun HomeScreen(
     connectivity: ConnectivityState,
-    onSendSos: (SosType, String) -> Boolean
+    onSendSos: (SosType, String) -> SendSosResult
 ) {
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val context = LocalContext.current
     var selectedType by remember { mutableStateOf(SosType.GENERAL) }
     var messageText by remember { mutableStateOf("") }
     var expanded by remember { mutableStateOf(false) }
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
 
-    // Our mathematically safe quick replies (All under 18 chars)
     val quickReplies = listOf(
         "Medical Emergency",
         "Trapped in debris",
@@ -215,16 +230,79 @@ fun HomeScreen(
         "Need water/food",
         "Send Rescue"
     )
-    Column(modifier = Modifier.fillMaxSize().background(PureBlack)) {
+
+    val sendAction = {
+        val result = onSendSos(selectedType, messageText)
+        when (result) {
+            SendSosResult.SUCCESS -> {
+                Toast.makeText(context, "SOS Message Broadcasting!", Toast.LENGTH_SHORT).show()
+                selectedType = SosType.GENERAL
+                messageText = ""
+                expanded = false
+                focusManager.clearFocus()
+            }
+            SendSosResult.EMPTY_MESSAGE -> {
+                Toast.makeText(context, "FAILED: Message cannot be empty.", Toast.LENGTH_LONG).show()
+            }
+            SendSosResult.HARDWARE_NOT_READY -> {
+                Toast.makeText(context, "FAILED: Please turn on Bluetooth and GPS Location!", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    val permissionsToRequest = remember {
+        mutableListOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        ).apply {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                add(Manifest.permission.BLUETOOTH_SCAN)
+                add(Manifest.permission.BLUETOOTH_ADVERTISE)
+                add(Manifest.permission.BLUETOOTH_CONNECT)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                add(Manifest.permission.NEARBY_WIFI_DEVICES)
+            }
+        }.toTypedArray()
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissionsMap ->
+        val allGranted = permissionsMap.values.all { it }
+        if (allGranted) {
+            sendAction()
+        } else {
+            Toast.makeText(context, "Permissions required for Mesh Networking", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(PureBlack)
+            .pointerInput(Unit) {
+                detectTapGestures(onTap = {
+                    keyboardController?.hide()
+                    focusManager.clearFocus()
+                })
+            }
+    ) {
         // TOP HEADER
         Column(
-            modifier = Modifier.fillMaxWidth().background(HeaderBlue).padding(horizontal = 24.dp, vertical = 32.dp)
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(HeaderBlue)
+                .padding(horizontal = 24.dp, vertical = 32.dp)
         ) {
             Text("ResQMesh", color = TextWhite, fontSize = 28.sp, fontWeight = FontWeight.Bold)
             Text("Emergency Response Network", color = Color(0xFF8C9EFF), fontSize = 14.sp)
             Spacer(Modifier.height(24.dp))
             Row(
-                modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(DarkCyanBg).padding(horizontal = 16.dp, vertical = 10.dp),
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(DarkCyanBg)
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Icon(Icons.Default.Wifi, null, tint = BrightCyan, modifier = Modifier.size(18.dp))
@@ -234,7 +312,9 @@ fun HomeScreen(
         }
 
         // FORM SECTION
-        Column(modifier = Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.SpaceBetween) {
+        Column(modifier = Modifier
+            .fillMaxSize()
+            .padding(24.dp), verticalArrangement = Arrangement.SpaceBetween) {
             Column {
                 Text("Emergency Type", color = TextWhite, fontSize = 14.sp, modifier = Modifier.padding(bottom = 8.dp))
                 ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }) {
@@ -242,7 +322,9 @@ fun HomeScreen(
                         value = selectedType.name.replace("_", " "),
                         onValueChange = {}, readOnly = true,
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-                        modifier = Modifier.menuAnchor().fillMaxWidth(),
+                        modifier = Modifier
+                            .menuAnchor()
+                            .fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp),
                         colors = OutlinedTextFieldDefaults.colors(
                             unfocusedContainerColor = InputGrayBg, focusedContainerColor = InputGrayBg,
@@ -268,7 +350,9 @@ fun HomeScreen(
 
                 LazyRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 16.dp)
                 ) {
                     items(quickReplies) { reply ->
                         Box(
@@ -291,8 +375,11 @@ fun HomeScreen(
                 OutlinedTextField(
                     value = messageText,
                     onValueChange = { newText ->
-                        if (newText.length <= 18) {
-                            messageText = newText
+                        val filteredText = newText.filter {
+                            it.isLetterOrDigit() || it.isWhitespace() || it in ".,'?!-()/"
+                        }
+                        if (filteredText.length <= 18) {
+                            messageText = filteredText
                         }
                     },
                     label = { Text("Custom Message (Optional)", color = TextLightGray) },
@@ -321,21 +408,19 @@ fun HomeScreen(
             Column {
                 Button(
                     onClick = {
-                        // Check if the ViewModel successfully fired the message
-                        val success = onSendSos(selectedType, messageText)
-
-                        if (success) {
-                            Toast.makeText(context, "SOS Message Broadcasting!", Toast.LENGTH_SHORT).show()
-                            selectedType = SosType.GENERAL
-                            messageText = ""
-                            expanded = false
+                        val allPermissionsGranted = permissionsToRequest.all {
+                            context.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED
+                        }
+                        if (allPermissionsGranted) {
+                            sendAction()
                         } else {
-                            // Hardware is off! Stop them and warn them!
-                            Toast.makeText(context, "FAILED: Please turn on Bluetooth and GPS Location!", Toast.LENGTH_LONG).show()
+                            permissionLauncher.launch(permissionsToRequest)
                         }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = VibrantRed),
-                    shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth().height(56.dp)
+                    shape = RoundedCornerShape(12.dp), modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp)
                 ) {
                     Icon(Icons.Default.Warning, null, tint = TextWhite)
                     Spacer(Modifier.width(12.dp))
@@ -344,7 +429,12 @@ fun HomeScreen(
                     Icon(Icons.Default.Send, null, tint = TextWhite)
                 }
                 Spacer(Modifier.height(16.dp))
-                Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(AmberBg).border(1.dp, AmberText.copy(alpha = 0.5f), RoundedCornerShape(8.dp)).padding(16.dp)) {
+                Box(modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(AmberBg)
+                    .border(1.dp, AmberText.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+                    .padding(16.dp)) {
                     Text("Note: Your SOS will be broadcast to nearby devices and emergency responders.", color = AmberText, fontSize = 13.sp, lineHeight = 18.sp)
                 }
             }
@@ -456,7 +546,7 @@ fun SettingsScreen(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { permissionsMap ->
-        val allGranted = permissionsMap.values.all { it == true }
+        val allGranted = permissionsMap.values.all { it }
 
         if (allGranted) {
             if (pendingAction == "BLUETOOTH") {
@@ -514,8 +604,6 @@ fun SettingsScreen(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
                         if (isChecked) {
                             pendingAction = "BLUETOOTH"
                             permissionLauncher.launch(permissionsToRequest)
-                        } else {
-                            viewModel.setBluetoothEnabled(false)
                         }
                     }
                 )
