@@ -223,12 +223,13 @@ fun HomeScreen(
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
 
+    // CHANGED: Shortened to fit the new strict 14-byte payload limit!
     val quickReplies = listOf(
-        "Medical Emergency",
-        "Trapped in debris",
-        "Need Evacuation",
-        "Need water/food",
-        "Send Rescue"
+        "Medical SOS",     // 11 chars
+        "Trapped inside",  // 14 chars
+        "Need Evac",       // 9 chars
+        "Need Food/H2O",   // 13 chars
+        "Send Rescue"      // 11 chars
     )
 
     val sendAction = {
@@ -378,12 +379,14 @@ fun HomeScreen(
                         val filteredText = newText.filter {
                             it.isLetterOrDigit() || it.isWhitespace() || it in ".,'?!-()/"
                         }
-                        if (filteredText.length <= 18) {
+                        // CHANGED: Validation now stops at 14 characters
+                        if (filteredText.length <= 14) {
                             messageText = filteredText
                         }
                     },
                     label = { Text("Custom Message (Optional)", color = TextLightGray) },
-                    placeholder = { Text("Max 18 chars...", color = DarkGray) },
+                    // CHANGED: Placeholder text
+                    placeholder = { Text("Max 14 chars...", color = DarkGray) },
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(bottom = 8.dp),
@@ -393,12 +396,13 @@ fun HomeScreen(
                         focusedTextColor = TextWhite,
                         unfocusedTextColor = TextWhite
                     ),
+                    // CHANGED: Supporting text counter and red error color trigger
                     supportingText = {
                         Text(
-                            text = "${messageText.length} / 18",
+                            text = "${messageText.length} / 14",
                             modifier = Modifier.fillMaxWidth(),
                             textAlign = TextAlign.End,
-                            color = if (messageText.length == 18) VibrantRed else TextLightGray
+                            color = if (messageText.length == 14) VibrantRed else TextLightGray
                         )
                     }
                 )

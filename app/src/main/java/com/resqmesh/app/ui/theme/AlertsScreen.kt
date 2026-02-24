@@ -57,8 +57,12 @@ fun getTimeAgo(timestamp: Long): String {
     return if (minutes < 1) "Just now" else "${minutes}m ago"
 }
 
-fun getShortId(fullId: String) = if (fullId.length >= 4) fullId.takeLast(4).uppercase() else "UNKN"
-
+// Extracts the sender ID cleanly, even if it's attached to our new Smart Deduplication Key
+fun getShortId(fullId: String): String {
+    // Grab just the "A1B2C3" part before the first underscore
+    val senderPart = fullId.substringBefore("_")
+    return if (senderPart.length >= 4) senderPart.takeLast(4).uppercase() else "UNKN"
+}
 @Composable
 fun AlertsScreen(viewModel: MainViewModel) {
     val allMessages by viewModel.sentMessages.collectAsState()

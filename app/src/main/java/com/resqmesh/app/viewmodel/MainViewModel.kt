@@ -37,8 +37,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val settingsRepository = SettingsRepository(application)
 
     // --- THE MESH ENGINE ---
-    private val bleMeshManager = BleMeshManager(application) { lat, lon, type, message, macAddress ->
-        handleIncomingMeshMessage(lat, lon, type, message, macAddress)
+    // CHANGED: Notice the parameter is now 'senderId' instead of 'macAddress'
+    private val bleMeshManager = BleMeshManager(application) { lat, lon, type, message, senderId ->
+        handleIncomingMeshMessage(lat, lon, type, message, senderId)
     }
     private val fusedLocationClient = LocationServices.getFusedLocationProviderClient(application)
 
@@ -79,7 +80,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     init {
         viewModelScope.launch {
             bluetoothEnabled.collect { isEnabled ->
-                if (isEnabled) { // Permission check is now inside BleMeshManager
+                if (isEnabled) {
                     bleMeshManager.startScanning()
                 } else {
                     bleMeshManager.stopAdvertising()
@@ -91,7 +92,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     @SuppressLint("MissingPermission")
     fun kickstartMeshEars() {
-        if (bluetoothEnabled.value) { // Permission check is now inside BleMeshManager
+        if (bluetoothEnabled.value) {
             bleMeshManager.startScanning()
             fusedLocationClient.lastLocation.addOnSuccessListener { location ->
                 location?.let {
@@ -115,7 +116,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         if (!hasRequiredPermissions()) {
             Log.e("MainViewModel", "sendSos called without required permissions!")
-            return SendSosResult.HARDWARE_NOT_READY // This will now be caught by the UI
+            return SendSosResult.HARDWARE_NOT_READY
         }
 
         viewModelScope.launch {
@@ -131,14 +132,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             val typeByte = typeToByte(type)
 
+            // CHANGED: Fetch our permanent 3-Byte Device ID from Settings Repository
+            val myDeviceId = settingsRepository.getOrGenerateDeviceId()
+
             fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
                 .addOnSuccessListener { location ->
                     val lat = location?.latitude?.toFloat() ?: 9.9312f
                     val lon = location?.longitude?.toFloat() ?: 76.2673f
-                    bleMeshManager.startAdvertising(messageText, lat, lon, typeByte)
+
+                    // Pass the device ID to the Advertiser!
+                    bleMeshManager.startAdvertising(myDeviceId, messageText, lat, lon, typeByte)
                 }
                 .addOnFailureListener {
-                    bleMeshManager.startAdvertising(messageText, 9.9312f, 76.2673f, typeByte)
+                    // Pass the device ID to the Advertiser!
+                    bleMeshManager.startAdvertising(myDeviceId, messageText, 9.9312f, 76.2673f, typeByte)
                 }
         }
         return SendSosResult.SUCCESS
@@ -157,12 +164,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // --- MESH NETWORK ROUTING ---
-    private fun handleIncomingMeshMessage(lat: Float, lon: Float, typeId: Byte, messageText: String, macAddress: String) {
+    // CHANGED: Accept the 'senderId' string instead of a MAC address
+// --- MESH NETWORK ROUTING ---
+    private fun handleIncomingMeshMessage(lat: Float, lon: Float, typeId: Byte, messageText: String, senderId: String) {
         viewModelScope.launch {
             val receivedType = byteToType(typeId)
 
+            // THE FIX: Smart Deduplication Key
+            // This prevents GPS drift spam, while allowing distinct new messages from the same user!
+            val smartId = "${senderId}_${receivedType.name}_${messageText.hashCode()}"
+
             val incomingSos = SosMessageEntity(
-                id = macAddress,
+                id = smartId,
                 type = receivedType,
                 message = messageText,
                 timestamp = System.currentTimeMillis(),
@@ -172,13 +185,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
 
             sosRepository.saveMessage(incomingSos)
-            Log.d("MainViewModel", "Saved incoming mesh SOS to local database!")
+            Log.d("MainViewModel", "Saved incoming mesh SOS: $smartId")
 
-            bleMeshManager.startAdvertising(messageText, lat, lon, typeId)
+            // RELAY IT FORWARD!
+            val originalDeviceIdInt = senderId.toInt(16)
+            bleMeshManager.startAdvertising(originalDeviceIdInt, messageText, lat, lon, typeId)
         }
-    }
-
-    // --- HELPER CONVERTERS ---
+    }    // --- HELPER CONVERTERS ---
     private fun typeToByte(type: SosType): Byte = when(type) {
         SosType.MEDICAL -> 1
         SosType.RESCUE -> 2
@@ -217,7 +230,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             setBluetoothEnabled(isBtOn)
         }
 
-        if (isBtOn) { // Permission checks are now inside BleMeshManager
+        if (isBtOn) {
             kickstartMeshEars()
         } else {
             bleMeshManager.stopScanning()
