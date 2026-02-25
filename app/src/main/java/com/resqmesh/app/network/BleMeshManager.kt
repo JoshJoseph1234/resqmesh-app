@@ -14,7 +14,6 @@ import java.util.UUID
 @SuppressLint("MissingPermission")
 class BleMeshManager(
     private val context: Context,
-    // CHANGED: We now return a 'senderId: String' instead of the hardware macAddress
     private val onMessageReceived: (lat: Float, lon: Float, type: Byte, message: String, senderId: String) -> Unit
 ) {
     private val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
@@ -34,16 +33,14 @@ class BleMeshManager(
         return context.checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
     }
 
-    // CHANGED: Now accepts the deviceId and mathematically packs it into 3 bytes
     private fun packSosPayload(deviceId: Int, lat: Float, lon: Float, emergencyType: Byte, message: String): ByteArray {
-        val safeMessage = message.take(14).toByteArray(Charsets.UTF_8) // Reduced to 14 characters to make room!
-        val buffer = java.nio.ByteBuffer.allocate(12 + safeMessage.size) // 12 bytes of overhead now
+        val safeMessage = message.take(14).toByteArray(Charsets.UTF_8)
+        val buffer = java.nio.ByteBuffer.allocate(12 + safeMessage.size)
 
         buffer.putFloat(lat)
         buffer.putFloat(lon)
         buffer.put(emergencyType)
 
-        // Pack the 3-Byte ID manually using bitwise shifts
         buffer.put((deviceId shr 16).toByte())
         buffer.put((deviceId shr 8).toByte())
         buffer.put(deviceId.toByte())
@@ -52,7 +49,6 @@ class BleMeshManager(
         return buffer.array()
     }
 
-    // CHANGED: Added deviceId parameter
     fun startAdvertising(deviceId: Int, messageText: String, lat: Float, lon: Float, typeId: Byte) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !hasPermission(Manifest.permission.BLUETOOTH_ADVERTISE)) {
             Log.e("BleMesh", "Attempted to advertise without BLUETOOTH_ADVERTISE permission")
@@ -64,14 +60,14 @@ class BleMeshManager(
             return
         }
 
-        Log.d("BleMesh", "Attempting to broadcast SOS: $messageText at $lat, $lon")
+        Log.d("BleMesh", "Attempting to broadcast SOS: $messageText at $lat, $lon from device $deviceId")
 
         bleAdvertiser?.stopAdvertising(advertiseCallback)
 
         val settings = AdvertiseSettings.Builder()
             .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
             .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
-            .setConnectable(true)
+            .setConnectable(false)
             .build()
 
         val advertiseData = AdvertiseData.Builder()
@@ -79,7 +75,6 @@ class BleMeshManager(
             .addServiceUuid(RESQMESH_SERVICE_UUID)
             .build()
 
-        // Pass the device ID to the packer!
         val payloadBytes = packSosPayload(deviceId, lat, lon, typeId, messageText)
         processedHashes.add(payloadBytes.contentHashCode())
 
@@ -137,7 +132,6 @@ class BleMeshManager(
             result?.device?.let { device ->
                 val payloadBytes = result.scanRecord?.getManufacturerSpecificData(MANUFACTURER_ID)
 
-                // CHANGED: We now require 12 minimum bytes to successfully unpack
                 if (payloadBytes != null && payloadBytes.size >= 12) {
                     val payloadHash = payloadBytes.contentHashCode()
                     if (processedHashes.contains(payloadHash)) return
@@ -149,13 +143,11 @@ class BleMeshManager(
                         val receivedLon = buffer.float
                         val receivedType = buffer.get()
 
-                        // CHANGED: Unpack the 3-byte ID back into an Integer
                         val b1 = buffer.get().toInt() and 0xFF
                         val b2 = buffer.get().toInt() and 0xFF
                         val b3 = buffer.get().toInt() and 0xFF
                         val senderIdInt = (b1 shl 16) or (b2 shl 8) or b3
 
-                        // Format it into a clean 6-character Hex string (e.g., "A3F9B2")
                         val senderIdString = String.format("%06X", senderIdInt)
 
                         val messageBytes = ByteArray(payloadBytes.size - 12)
@@ -164,7 +156,6 @@ class BleMeshManager(
 
                         Log.d("BleMesh", "🚨 NEW SOS RECEIVED from User #$senderIdString: $receivedMessage")
 
-                        // Pass the new senderIdString instead of the device.address!
                         onMessageReceived(receivedLat, receivedLon, receivedType, receivedMessage, senderIdString)
                     } catch (e: Exception) {
                         Log.e("BleMesh", "Error unpacking: ${e.message}")

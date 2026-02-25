@@ -4,63 +4,62 @@ import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
-import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
-import kotlin.random.Random
+import kotlinx.coroutines.runBlocking
+import java.util.UUID
 
-// 1. Create the DataStore instance
-private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "resqmesh_settings")
+// 1. Define the DataStore instance
+private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
 
 class SettingsRepository(private val context: Context) {
 
-    // 2. Define the exact "keys" for the data we want to save
-    companion object {
-        val BLUETOOTH_KEY = booleanPreferencesKey("bluetooth_enabled")
-        val WIFI_KEY = booleanPreferencesKey("wifi_enabled")
-        // NEW: Key for our permanent 3-Byte Device ID
-        val DEVICE_ID_KEY = intPreferencesKey("device_id")
+    // 2. Define Keys for your settings
+    private val bluetoothKey = booleanPreferencesKey("bluetooth_enabled")
+    private val wifiKey = booleanPreferencesKey("wifi_enabled")
+    private val deviceIdKey = stringPreferencesKey("device_permanent_id")
+
+
+    // 3. Create Flows to automatically listen for changes
+    val bluetoothEnabledFlow: Flow<Boolean> = context.dataStore.data
+        .map { preferences ->
+            preferences[bluetoothKey] ?: false
+        }
+
+    val wifiEnabledFlow: Flow<Boolean> = context.dataStore.data
+        .map { preferences ->
+            preferences[wifiKey] ?: false
+        }
+
+    // 4. Create suspend functions to save the settings
+    suspend fun saveBluetoothState(isEnabled: Boolean) {
+        context.dataStore.edit { settings ->
+            settings[bluetoothKey] = isEnabled
+        }
     }
 
-    // 3. Read the data as a Flow
-    val bluetoothEnabledFlow: Flow<Boolean> = context.dataStore.data.map { preferences ->
-        preferences[BLUETOOTH_KEY] ?: false
+    suspend fun saveWifiState(isEnabled: Boolean) {
+        context.dataStore.edit { settings ->
+            settings[wifiKey] = isEnabled
+        }
     }
 
-    val wifiEnabledFlow: Flow<Boolean> = context.dataStore.data.map { preferences ->
-        preferences[WIFI_KEY] ?: false
-    }
-
-    // NEW: Safely get the ID, or generate it if this is the first time the app is opened!
-    suspend fun getOrGenerateDeviceId(): Int {
-        val preferences = context.dataStore.data.first()
-        val existingId = preferences[DEVICE_ID_KEY]
-
-        return if (existingId != null) {
-            existingId
-        } else {
-            // Generate a random 3-Byte ID (0 to 16,777,215)
-            val newId = Random.nextInt(0, 16777215)
-            context.dataStore.edit { prefs ->
-                prefs[DEVICE_ID_KEY] = newId
+    fun getOrGenerateDeviceId(): Int {
+        return runBlocking {
+            val currentId = context.dataStore.data.first()[deviceIdKey]
+            if (currentId != null) {
+                currentId.toInt(16)
+            } else {
+                val newId = UUID.randomUUID().toString().substring(0, 6).uppercase()
+                context.dataStore.edit {
+                    it[deviceIdKey] = newId
+                }
+                newId.toInt(16)
             }
-            newId
-        }
-    }
-
-    // 4. Functions to write new data to the storage
-    suspend fun saveBluetoothState(enabled: Boolean) {
-        context.dataStore.edit { preferences ->
-            preferences[BLUETOOTH_KEY] = enabled
-        }
-    }
-
-    suspend fun saveWifiState(enabled: Boolean) {
-        context.dataStore.edit { preferences ->
-            preferences[WIFI_KEY] = enabled
         }
     }
 }

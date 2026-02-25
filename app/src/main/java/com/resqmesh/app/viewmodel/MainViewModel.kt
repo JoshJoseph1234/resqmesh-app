@@ -14,12 +14,14 @@ import com.resqmesh.app.data.ResQMeshDatabase
 import com.resqmesh.app.data.SettingsRepository
 import com.resqmesh.app.data.SosRepository
 import com.resqmesh.app.network.BleMeshManager
+import com.resqmesh.app.util.ConnectivityUtil
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
 import java.util.UUID
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothManager
@@ -28,6 +30,7 @@ import android.util.Log
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.resqmesh.app.data.SosMessageEntity
+import kotlinx.coroutines.delay
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -37,7 +40,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val settingsRepository = SettingsRepository(application)
 
     // --- THE MESH ENGINE ---
-    // CHANGED: Notice the parameter is now 'senderId' instead of 'macAddress'
     private val bleMeshManager = BleMeshManager(application) { lat, lon, type, message, senderId ->
         handleIncomingMeshMessage(lat, lon, type, message, senderId)
     }
@@ -49,6 +51,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _connectivity = MutableStateFlow(ConnectivityState.OFFLINE)
     val connectivity = _connectivity.asStateFlow()
+
+    private val _isInternetActuallyWorking = MutableStateFlow(false)
 
     // --- UI STATE: SETTINGS ---
     val bluetoothEnabled: StateFlow<Boolean> = settingsRepository.bluetoothEnabledFlow
@@ -78,9 +82,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // --- INITIALIZATION ---
     init {
+        viewModelScope.launch(Dispatchers.IO) {
+            while (true) {
+                val hasInternet = ConnectivityUtil.hasRealInternet()
+                _isInternetActuallyWorking.value = hasInternet
+                if (hasInternet) {
+                    _connectivity.value = ConnectivityState.INTERNET
+                } else if (bluetoothEnabled.value) {
+                    _connectivity.value = ConnectivityState.MESH_ACTIVE
+                } else {
+                    _connectivity.value = ConnectivityState.OFFLINE
+                }
+                delay(10000) // Check every 10 seconds
+            }
+        }
+
         viewModelScope.launch {
             bluetoothEnabled.collect { isEnabled ->
-                if (isEnabled) {
+                if (isEnabled) { 
                     bleMeshManager.startScanning()
                 } else {
                     bleMeshManager.stopAdvertising()
@@ -103,7 +122,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // --- ACTIONS ---
     @SuppressLint("MissingPermission")
     fun sendSos(type: SosType, messageText: String): SendSosResult {
         if (messageText.isBlank()) {
@@ -125,27 +143,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 type = type,
                 message = messageText,
                 timestamp = System.currentTimeMillis(),
-                status = DeliveryStatus.PENDING
+                status = if (_isInternetActuallyWorking.value) DeliveryStatus.DELIVERED else DeliveryStatus.PENDING
             )
             sosRepository.saveMessage(newSos)
-            _connectivity.value = ConnectivityState.MESH_ACTIVE
+
+            if (_isInternetActuallyWorking.value) {
+                Log.d("ResQMesh_Cloud", "Internet Detected! Sending SOS to Dummy Server: https://api.resqmesh.dummy/v1/sos")
+                delay(500) // Simulate network latency
+                Log.d("ResQMesh_Cloud", "Cloud Sync Success: Message ${newSos.id} is now on the central dashboard.")
+            }
 
             val typeByte = typeToByte(type)
-
-            // CHANGED: Fetch our permanent 3-Byte Device ID from Settings Repository
             val myDeviceId = settingsRepository.getOrGenerateDeviceId()
 
             fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
                 .addOnSuccessListener { location ->
-                    val lat = location?.latitude?.toFloat() ?: 9.9312f
-                    val lon = location?.longitude?.toFloat() ?: 76.2673f
-
-                    // Pass the device ID to the Advertiser!
+                    val lat = location?.latitude?.toFloat() ?: 0.0f
+                    val lon = location?.longitude?.toFloat() ?: 0.0f
                     bleMeshManager.startAdvertising(myDeviceId, messageText, lat, lon, typeByte)
                 }
-                .addOnFailureListener {
-                    // Pass the device ID to the Advertiser!
-                    bleMeshManager.startAdvertising(myDeviceId, messageText, 9.9312f, 76.2673f, typeByte)
+                .addOnFailureListener { 
+                    bleMeshManager.startAdvertising(myDeviceId, messageText, 0.0f, 0.0f, typeByte)
                 }
         }
         return SendSosResult.SUCCESS
@@ -163,15 +181,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // --- MESH NETWORK ROUTING ---
-    // CHANGED: Accept the 'senderId' string instead of a MAC address
-// --- MESH NETWORK ROUTING ---
     private fun handleIncomingMeshMessage(lat: Float, lon: Float, typeId: Byte, messageText: String, senderId: String) {
         viewModelScope.launch {
             val receivedType = byteToType(typeId)
-
-            // THE FIX: Smart Deduplication Key
-            // This prevents GPS drift spam, while allowing distinct new messages from the same user!
             val smartId = "${senderId}_${receivedType.name}_${messageText.hashCode()}"
 
             val incomingSos = SosMessageEntity(
@@ -179,26 +191,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 type = receivedType,
                 message = messageText,
                 timestamp = System.currentTimeMillis(),
-                status = DeliveryStatus.DELIVERED,
+                status = DeliveryStatus.RELAYED, // Changed from DELIVERED
                 latitude = lat.toDouble(),
                 longitude = lon.toDouble()
             )
 
             sosRepository.saveMessage(incomingSos)
             Log.d("MainViewModel", "Saved incoming mesh SOS: $smartId")
-
-            // RELAY IT FORWARD!
-            val originalDeviceIdInt = senderId.toInt(16)
-            bleMeshManager.startAdvertising(originalDeviceIdInt, messageText, lat, lon, typeId)
         }
-    }    // --- HELPER CONVERTERS ---
+    }
+
     private fun typeToByte(type: SosType): Byte = when(type) {
         SosType.MEDICAL -> 1
         SosType.RESCUE -> 2
         SosType.FOOD -> 3
         SosType.TRAPPED -> 4
         SosType.GENERAL -> 5
-        SosType.OTHER -> 6
+        else -> 6
     }
 
     private fun byteToType(byte: Byte): SosType = when(byte.toInt()) {
@@ -210,7 +219,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         else -> SosType.OTHER
     }
 
-    // --- HARDWARE MONITORING ---
     fun isHardwareReady(): Boolean {
         val btManager = getApplication<Application>().getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         val locManager = getApplication<Application>().getSystemService(Context.LOCATION_SERVICE) as android.location.LocationManager

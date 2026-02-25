@@ -81,8 +81,7 @@ val BorderGray = Color(0xFF2C2C35)
 val TextWhite = Color(0xFFFFFFFF)
 val TextLightGray = Color(0xFFA0A0AB)
 val AmberText = Color(0xFFFFB300)
-val AmberBg =
-    Color(0xFF332200)
+val AmberBg = Color(0xFF332200)
 
 // New Colors for Settings & Status
 val SuccessGreen = Color(0xFF00E676)
@@ -96,8 +95,6 @@ val IconGrayBg = Color(0xFF424242)
 val InfoCardBlueBg = Color(0xFF1A237E)
 val InfoCardRedBg = Color(0xFF3E1010)
 
-
-
 @Composable
 fun HardwareStateMonitor(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
     val context = LocalContext.current
@@ -105,7 +102,6 @@ fun HardwareStateMonitor(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
     DisposableEffect(Unit) {
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
-                // When the OS announces Bluetooth or GPS changed, tell the ViewModel!
                 viewModel.syncHardwareState()
             }
         }
@@ -122,13 +118,12 @@ fun HardwareStateMonitor(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
         }
     }
 }
-// --- MAIN SCREEN & NAVIGATION ---
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SimpleResQMeshApp(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
     val navController = rememberNavController()
 
-    // Check hardware state once when the app starts up
     LaunchedEffect(Unit) {
         viewModel.syncHardwareState()
     }
@@ -138,7 +133,6 @@ fun SimpleResQMeshApp(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
     val sentMessages by viewModel.sentMessages.collectAsState()
     val connectivity by viewModel.connectivity.collectAsState()
 
-    // 4-Tab Layout (Home, Alerts, Status, Settings)
     val items = listOf(
         Screen("home", "Home", Icons.Default.Home),
         Screen("alerts", "Alerts", Icons.Default.Warning),
@@ -160,7 +154,7 @@ fun SimpleResQMeshApp(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
                             label = { Text(screen.title, fontSize = 10.sp) },
                             selected = currentRoute == screen.route,
                             colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = BrightCyan, // Updated to match Figma Cyan
+                                selectedIconColor = BrightCyan,
                                 selectedTextColor = BrightCyan,
                                 unselectedIconColor = TextLightGray,
                                 unselectedTextColor = TextLightGray,
@@ -182,9 +176,7 @@ fun SimpleResQMeshApp(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
         NavHost(
             navController = navController,
             startDestination = "home",
-            modifier = Modifier
-                .padding(innerPadding)
-                .background(PureBlack)
+            modifier = Modifier.padding(innerPadding).background(PureBlack)
         ) {
             composable("home") {
                 HomeScreen(
@@ -192,7 +184,6 @@ fun SimpleResQMeshApp(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
                     onSendSos = { type, msg -> viewModel.sendSos(type, msg) }
                 )
             }
-            // NEW: Added the Alerts Screen Route!
             composable("alerts") {
                 com.resqmesh.app.ui.theme.AlertsScreen(viewModel = viewModel)
             }
@@ -208,8 +199,6 @@ fun SimpleResQMeshApp(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
     }
 }
 
-// --- SCREENS ---
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
@@ -223,13 +212,12 @@ fun HomeScreen(
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
 
-    // CHANGED: Shortened to fit the new strict 14-byte payload limit!
     val quickReplies = listOf(
-        "Medical SOS",     // 11 chars
-        "Trapped inside",  // 14 chars
-        "Need Evac",       // 9 chars
-        "Need Food/H2O",   // 13 chars
-        "Send Rescue"      // 11 chars
+        "Medical Help",
+        "Trapped",
+        "Need Evac",
+        "Need Food/Water",
+        "Rescue Me"
     )
 
     val sendAction = {
@@ -289,33 +277,28 @@ fun HomeScreen(
                 })
             }
     ) {
-        // TOP HEADER
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(HeaderBlue)
-                .padding(horizontal = 24.dp, vertical = 32.dp)
+            modifier = Modifier.fillMaxWidth().background(HeaderBlue).padding(horizontal = 24.dp, vertical = 32.dp)
         ) {
             Text("ResQMesh", color = TextWhite, fontSize = 28.sp, fontWeight = FontWeight.Bold)
             Text("Emergency Response Network", color = Color(0xFF8C9EFF), fontSize = 14.sp)
             Spacer(Modifier.height(24.dp))
             Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(DarkCyanBg)
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(DarkCyanBg).padding(horizontal = 16.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.Default.Wifi, null, tint = BrightCyan, modifier = Modifier.size(18.dp))
+                val (statusText, statusIcon) = when(connectivity) {
+                    ConnectivityState.INTERNET -> "Cloud & Mesh Active" to Icons.Default.CloudQueue
+                    ConnectivityState.MESH_ACTIVE -> "Mesh Network Active" to Icons.Default.Wifi
+                    else -> "Offline" to Icons.Default.CloudOff
+                }
+                Icon(statusIcon, null, tint = BrightCyan, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
-                Text(if(connectivity == ConnectivityState.OFFLINE) "Offline" else "Mesh Network Active", color = BrightCyan, fontSize = 14.sp)
+                Text(statusText, color = BrightCyan, fontSize = 14.sp)
             }
         }
 
-        // FORM SECTION
-        Column(modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp), verticalArrangement = Arrangement.SpaceBetween) {
+        Column(modifier = Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.SpaceBetween) {
             Column {
                 Text("Emergency Type", color = TextWhite, fontSize = 14.sp, modifier = Modifier.padding(bottom = 8.dp))
                 ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }) {
@@ -323,9 +306,7 @@ fun HomeScreen(
                         value = selectedType.name.replace("_", " "),
                         onValueChange = {}, readOnly = true,
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-                        modifier = Modifier
-                            .menuAnchor()
-                            .fillMaxWidth(),
+                        modifier = Modifier.menuAnchor().fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp),
                         colors = OutlinedTextFieldDefaults.colors(
                             unfocusedContainerColor = InputGrayBg, focusedContainerColor = InputGrayBg,
@@ -340,7 +321,6 @@ fun HomeScreen(
                     }
                 }
                 Spacer(Modifier.height(24.dp))
-                // --- QUICK REPLIES SECTION ---
                 Text(
                     text = "QUICK REPLIES",
                     color = TextLightGray,
@@ -351,9 +331,7 @@ fun HomeScreen(
 
                 LazyRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 16.dp)
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
                 ) {
                     items(quickReplies) { reply ->
                         Box(
@@ -372,43 +350,33 @@ fun HomeScreen(
                         }
                     }
                 }
-                // --- CUSTOM MESSAGE TEXT FIELD ---
                 OutlinedTextField(
                     value = messageText,
                     onValueChange = { newText ->
-                        val filteredText = newText.filter {
-                            it.isLetterOrDigit() || it.isWhitespace() || it in ".,'?!-()/"
-                        }
-                        // CHANGED: Validation now stops at 14 characters
-                        if (filteredText.length <= 14) {
-                            messageText = filteredText
+                        if (newText.length <= 14) { 
+                            messageText = newText.filter { it.isLetterOrDigit() || it.isWhitespace() || it in ".,'?!-()/" } 
                         }
                     },
                     label = { Text("Custom Message (Optional)", color = TextLightGray) },
-                    // CHANGED: Placeholder text
                     placeholder = { Text("Max 14 chars...", color = DarkGray) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 8.dp),
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = BrightCyan,
                         unfocusedBorderColor = BorderGray,
                         focusedTextColor = TextWhite,
                         unfocusedTextColor = TextWhite
                     ),
-                    // CHANGED: Supporting text counter and red error color trigger
                     supportingText = {
                         Text(
                             text = "${messageText.length} / 14",
                             modifier = Modifier.fillMaxWidth(),
                             textAlign = TextAlign.End,
-                            color = if (messageText.length == 14) VibrantRed else TextLightGray
+                            color = if (messageText.length >= 14) VibrantRed else TextLightGray
                         )
                     }
                 )
             }
 
-            // BOTTOM SECTION
             Column {
                 Button(
                     onClick = {
@@ -422,9 +390,7 @@ fun HomeScreen(
                         }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = VibrantRed),
-                    shape = RoundedCornerShape(12.dp), modifier = Modifier
-                        .fillMaxWidth()
-                        .height(56.dp)
+                    shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth().height(56.dp)
                 ) {
                     Icon(Icons.Default.Warning, null, tint = TextWhite)
                     Spacer(Modifier.width(12.dp))
@@ -433,12 +399,7 @@ fun HomeScreen(
                     Icon(Icons.Default.Send, null, tint = TextWhite)
                 }
                 Spacer(Modifier.height(16.dp))
-                Box(modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(AmberBg)
-                    .border(1.dp, AmberText.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
-                    .padding(16.dp)) {
+                Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(AmberBg).border(1.dp, AmberText.copy(alpha = 0.5f), RoundedCornerShape(8.dp)).padding(16.dp)) {
                     Text("Note: Your SOS will be broadcast to nearby devices and emergency responders.", color = AmberText, fontSize = 13.sp, lineHeight = 18.sp)
                 }
             }
@@ -449,14 +410,13 @@ fun HomeScreen(
 @Composable
 fun StatusScreen(messages: List<SosMessage>) {
     Column(modifier = Modifier.fillMaxSize().background(PureBlack)) {
-        // HEADER
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 32.dp)) {
             Text("Message Status", color = TextWhite, fontSize = 28.sp, fontWeight = FontWeight.Bold)
             Text("Track your SOS messages", color = TextLightGray, fontSize = 14.sp)
         }
 
         LazyColumn(contentPadding = PaddingValues(horizontal = 24.dp, vertical = 8.dp)) {
-            items(messages) { msg ->
+            items(messages, key = { it.id }) { msg ->
                 val (statusColor, statusBg, statusIcon) = when (msg.status) {
                     DeliveryStatus.DELIVERED -> Triple(SuccessGreen, SuccessGreenBg, Icons.Default.CheckCircle)
                     DeliveryStatus.RELAYED -> Triple(RelayedBlue, RelayedBlueBg, Icons.Default.Wifi)
@@ -472,7 +432,6 @@ fun StatusScreen(messages: List<SosMessage>) {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                             Text(msg.type.name.replace("_", " "), color = TextWhite, fontSize = 18.sp, fontWeight = FontWeight.Bold)
 
-                            // Status Pill
                             Row(
                                 modifier = Modifier.border(1.dp, statusColor, RoundedCornerShape(50)).background(statusBg, RoundedCornerShape(50)).padding(horizontal = 10.dp, vertical = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically
@@ -509,7 +468,6 @@ fun StatusScreen(messages: List<SosMessage>) {
 fun SettingsScreen(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
     val context = LocalContext.current
 
-    // Hardware Managers
     val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
     val bluetoothAdapter: BluetoothAdapter? = bluetoothManager.adapter
     val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
@@ -554,7 +512,6 @@ fun SettingsScreen(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
 
         if (allGranted) {
             if (pendingAction == "BLUETOOTH") {
-                // NEW: Force the user to turn on physical Location if it's off!
                 val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as android.location.LocationManager
                 if (!locationManager.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER)) {
                     Toast.makeText(context, "Please enable GPS Location for Mesh", Toast.LENGTH_LONG).show()
@@ -566,7 +523,7 @@ fun SettingsScreen(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
                     enableBluetoothLauncher.launch(enableBtIntent)
                 } else {
                     viewModel.setBluetoothEnabled(true)
-                    viewModel.kickstartMeshEars() // Kickstart the engine!
+                    viewModel.kickstartMeshEars()
                 }
             } else if (pendingAction == "WIFI") {
                 try {
@@ -590,7 +547,6 @@ fun SettingsScreen(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
     }
 
     Column(modifier = Modifier.fillMaxSize().background(PureBlack)) {
-        // HEADER
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 32.dp)) {
             Text("Settings", color = TextWhite, fontSize = 28.sp, fontWeight = FontWeight.Bold)
             Text("Configure ResQMesh", color = TextLightGray, fontSize = 14.sp)

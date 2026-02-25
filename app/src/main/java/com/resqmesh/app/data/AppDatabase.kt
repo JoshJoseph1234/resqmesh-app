@@ -6,19 +6,17 @@ import com.resqmesh.app.DeliveryStatus
 import com.resqmesh.app.SosType
 import kotlinx.coroutines.flow.Flow
 
-// 1. The Entity (How the table looks)
 @Entity(tableName = "sos_messages")
 data class SosMessageEntity(
     @PrimaryKey val id: String,
     val type: SosType,
     val message: String,
     val timestamp: Long,
-    val status: DeliveryStatus,
+    var status: DeliveryStatus, // Changed to var
     val latitude: Double? = null,
     val longitude: Double? = null
 )
 
-// 2. Type Converters (Now with explicit return types for KSP)
 class Converters {
     @TypeConverter
     fun fromSosType(value: SosType): String = value.name
@@ -32,18 +30,23 @@ class Converters {
     @TypeConverter
     fun toDeliveryStatus(value: String): DeliveryStatus = DeliveryStatus.valueOf(value)
 }
-// 3. The DAO (Data Access Object - Your SQL Queries)
+
 @Dao
 interface SosDao {
     @Query("SELECT * FROM sos_messages ORDER BY timestamp DESC")
-    fun getAllMessages(): Flow<List<SosMessageEntity>> // Flow automatically updates the UI!
+    fun getAllMessages(): Flow<List<SosMessageEntity>>
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertMessage(message: SosMessageEntity)
+
+    @Query("UPDATE sos_messages SET status = :status WHERE id = :id")
+    suspend fun updateStatus(id: String, status: DeliveryStatus)
+
+    @Query("SELECT * FROM sos_messages WHERE status = 'PENDING'")
+    suspend fun getPendingMessages(): List<SosMessageEntity>
 }
 
-// 4. The Database Setup
-@Database(entities = [SosMessageEntity::class], version = 1, exportSchema = false)
+@Database(entities = [SosMessageEntity::class], version = 3, exportSchema = false)
 @TypeConverters(Converters::class)
 abstract class ResQMeshDatabase : RoomDatabase() {
     abstract fun sosDao(): SosDao
@@ -57,7 +60,9 @@ abstract class ResQMeshDatabase : RoomDatabase() {
                     context.applicationContext,
                     ResQMeshDatabase::class.java,
                     "resqmesh_offline_db"
-                ).build()
+                )
+                .fallbackToDestructiveMigration()
+                .build()
                 INSTANCE = instance
                 instance
             }
@@ -65,11 +70,18 @@ abstract class ResQMeshDatabase : RoomDatabase() {
     }
 }
 
-// 5. The Repository (Single Source of Truth)
 class SosRepository(private val dao: SosDao) {
     val allMessages: Flow<List<SosMessageEntity>> = dao.getAllMessages()
 
     suspend fun saveMessage(message: SosMessageEntity) {
         dao.insertMessage(message)
+    }
+
+    suspend fun updateMessageStatus(id: String, status: DeliveryStatus) {
+        dao.updateStatus(id, status)
+    }
+
+    suspend fun getPendingMessages(): List<SosMessageEntity> {
+        return dao.getPendingMessages()
     }
 }
