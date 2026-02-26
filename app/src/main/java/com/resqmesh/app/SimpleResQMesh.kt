@@ -218,7 +218,7 @@ fun HomeScreen(
         QuickReply("Medical Help", SosType.MEDICAL),
         QuickReply("Trapped", SosType.TRAPPED),
         QuickReply("Need Evac", SosType.RESCUE),
-        QuickReply("Need Food/Water", SosType.FOOD),
+        QuickReply("Need Food/H2O", SosType.FOOD),
         QuickReply("Rescue Me", SosType.RESCUE)
     )
 

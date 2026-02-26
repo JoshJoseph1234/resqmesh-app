@@ -113,7 +113,7 @@ fun AlertCard(alert: SosMessageEntity, myLat: Double?, myLon: Double?) {
     val (tagColor, typeString) = when {
         alert.type.name.contains("MEDICAL") -> Pair(VibrantRed, "Medical Emergency")
         alert.type.name.contains("RESCUE") -> Pair(Amber400, "Need Rescue")
-        alert.type.name.contains("FOOD") -> Pair(Green400, "Need Food/Water")
+        alert.type.name.contains("FOOD") -> Pair(Green400, "Need Food/H2O")
         else -> Pair(VibrantRed, alert.type.name.replace("_", " "))
     }
 
