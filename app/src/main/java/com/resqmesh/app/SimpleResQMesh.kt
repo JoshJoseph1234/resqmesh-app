@@ -70,6 +70,8 @@ data class SosMessage(
     val status: DeliveryStatus = DeliveryStatus.PENDING
 )
 
+data class QuickReply(val message: String, val type: SosType)
+
 // --- THEME COLORS (Figma AMOLED) ---
 val PureBlack = Color(0xFF000000)
 val HeaderBlue = Color(0xFF141933)
@@ -213,11 +215,11 @@ fun HomeScreen(
     val focusManager = LocalFocusManager.current
 
     val quickReplies = listOf(
-        "Medical Help",
-        "Trapped",
-        "Need Evac",
-        "Need Food/Water",
-        "Rescue Me"
+        QuickReply("Medical Help", SosType.MEDICAL),
+        QuickReply("Trapped", SosType.TRAPPED),
+        QuickReply("Need Evac", SosType.RESCUE),
+        QuickReply("Need Food/Water", SosType.FOOD),
+        QuickReply("Rescue Me", SosType.RESCUE)
     )
 
     val sendAction = {
@@ -337,13 +339,16 @@ fun HomeScreen(
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(16.dp))
-                                .background(if (messageText == reply) BrightCyan else Color(0xFF1E1E1E))
-                                .clickable { messageText = reply }
+                                .background(if (messageText == reply.message) BrightCyan else Color(0xFF1E1E1E))
+                                .clickable { 
+                                    messageText = reply.message
+                                    selectedType = reply.type
+                                 }
                                 .padding(horizontal = 16.dp, vertical = 8.dp)
                         ) {
                             Text(
-                                text = reply,
-                                color = if (messageText == reply) PureBlack else TextWhite,
+                                text = reply.message,
+                                color = if (messageText == reply.message) PureBlack else TextWhite,
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Medium
                             )
@@ -353,12 +358,12 @@ fun HomeScreen(
                 OutlinedTextField(
                     value = messageText,
                     onValueChange = { newText ->
-                        if (newText.length <= 14) { 
+                        if (newText.length <= 15) {
                             messageText = newText.filter { it.isLetterOrDigit() || it.isWhitespace() || it in ".,'?!-()/" } 
                         }
                     },
                     label = { Text("Custom Message (Optional)", color = TextLightGray) },
-                    placeholder = { Text("Max 14 chars...", color = DarkGray) },
+                    placeholder = { Text("Max 15 chars...", color = DarkGray) },
                     modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = BrightCyan,
@@ -368,10 +373,10 @@ fun HomeScreen(
                     ),
                     supportingText = {
                         Text(
-                            text = "${messageText.length} / 14",
+                            text = "${messageText.length} / 15",
                             modifier = Modifier.fillMaxWidth(),
                             textAlign = TextAlign.End,
-                            color = if (messageText.length >= 14) VibrantRed else TextLightGray
+                            color = if (messageText.length >= 15) VibrantRed else TextLightGray
                         )
                     }
                 )

@@ -57,18 +57,16 @@ fun getTimeAgo(timestamp: Long): String {
     return if (minutes < 1) "Just now" else "${minutes}m ago"
 }
 
-// Extracts the sender ID cleanly, even if it's attached to our new Smart Deduplication Key
 fun getShortId(fullId: String): String {
-    // Grab just the "A1B2C3" part before the first underscore
     val senderPart = fullId.substringBefore("_")
     return if (senderPart.length >= 4) senderPart.takeLast(4).uppercase() else "UNKN"
 }
+
 @Composable
 fun AlertsScreen(viewModel: MainViewModel) {
     val allMessages by viewModel.sentMessages.collectAsState()
-    val incomingAlerts = allMessages.filter { it.status == DeliveryStatus.DELIVERED }
+    val incomingAlerts = allMessages.filter { it.status == DeliveryStatus.RELAYED }
 
-    // Fetch REAL location from ViewModel instead of hardcoding!
     val myLat by viewModel.myCurrentLat.collectAsState()
     val myLon by viewModel.myCurrentLon.collectAsState()
 
@@ -106,7 +104,6 @@ fun AlertsScreen(viewModel: MainViewModel) {
 fun AlertCard(alert: SosMessageEntity, myLat: Double?, myLon: Double?) {
     val context = LocalContext.current
 
-    // Calculates real distance. If location hasn't locked yet, shows 0.
     val meters = if (alert.latitude != null && alert.longitude != null && myLat != null && myLon != null) {
         getDistanceInMeters(myLat, myLon, alert.latitude, alert.longitude)
     } else {
@@ -152,7 +149,6 @@ fun AlertCard(alert: SosMessageEntity, myLat: Double?, myLon: Double?) {
             HorizontalDivider(color = BorderGray, thickness = 1.dp)
             Spacer(modifier = Modifier.height(12.dp))
 
-            // THE GOOGLE MAPS INTENT!
             Text(
                 text = "View Directions",
                 color = BrightCyan,
@@ -168,7 +164,6 @@ fun AlertCard(alert: SosMessageEntity, myLat: Double?, myLon: Double?) {
                             if (mapIntent.resolveActivity(context.packageManager) != null) {
                                 context.startActivity(mapIntent)
                             } else {
-                                // Fallback to web browser if Maps app isn't installed
                                 context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://maps.google.com/?q=${alert.latitude},${alert.longitude}")))
                             }
                         }

@@ -31,6 +31,9 @@ import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.resqmesh.app.data.SosMessageEntity
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
+import java.net.HttpURLConnection
+import java.net.URL
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -88,6 +91,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _isInternetActuallyWorking.value = hasInternet
                 if (hasInternet) {
                     _connectivity.value = ConnectivityState.INTERNET
+                    syncPendingMessagesToCloud()
                 } else if (bluetoothEnabled.value) {
                     _connectivity.value = ConnectivityState.MESH_ACTIVE
                 } else {
@@ -109,6 +113,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private suspend fun syncPendingMessagesToCloud() {
+        val pendingMessages = sosRepository.getPendingMessages()
+        if (pendingMessages.isNotEmpty()) {
+            Log.d("ResQMesh_Cloud", "Internet connection detected. Syncing ${pendingMessages.size} pending messages.")
+            pendingMessages.forEach { message ->
+                sendToWebhook(message)
+                delay(200) // Simulate network latency for each message
+                sosRepository.updateMessageStatus(message.id, DeliveryStatus.DELIVERED)
+            }
+        }
+    }
+
     @SuppressLint("MissingPermission")
     fun kickstartMeshEars() {
         if (bluetoothEnabled.value) {
@@ -118,6 +134,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     myCurrentLat.value = it.latitude
                     myCurrentLon.value = it.longitude
                 }
+            }
+        }
+    }
+
+    private fun processSosMessage(type: SosType, messageText: String, lat: Double, lon: Double) {
+        viewModelScope.launch {
+            val newSos = SosMessageEntity(
+                id = UUID.randomUUID().toString(),
+                type = type,
+                message = messageText,
+                timestamp = System.currentTimeMillis(),
+                status = if (_isInternetActuallyWorking.value) DeliveryStatus.DELIVERED else DeliveryStatus.PENDING,
+                latitude = lat,
+                longitude = lon
+            )
+            sosRepository.saveMessage(newSos)
+
+            if (_isInternetActuallyWorking.value) {
+                sendToWebhook(newSos)
+            } else {
+                val typeByte = typeToByte(type)
+                val myDeviceId = settingsRepository.getOrGenerateDeviceId()
+                bleMeshManager.startAdvertising(myDeviceId, messageText, lat.toFloat(), lon.toFloat(), typeByte)
             }
         }
     }
@@ -137,35 +176,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return SendSosResult.HARDWARE_NOT_READY
         }
 
-        viewModelScope.launch {
-            val newSos = SosMessageEntity(
-                id = UUID.randomUUID().toString(),
-                type = type,
-                message = messageText,
-                timestamp = System.currentTimeMillis(),
-                status = if (_isInternetActuallyWorking.value) DeliveryStatus.DELIVERED else DeliveryStatus.PENDING
-            )
-            sosRepository.saveMessage(newSos)
+        fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
+            .addOnSuccessListener { location ->
+                val lat = location?.latitude ?: myCurrentLat.value ?: 0.0
+                val lon = location?.longitude ?: myCurrentLon.value ?: 0.0
 
-            if (_isInternetActuallyWorking.value) {
-                Log.d("ResQMesh_Cloud", "Internet Detected! Sending SOS to Dummy Server: https://api.resqmesh.dummy/v1/sos")
-                delay(500) // Simulate network latency
-                Log.d("ResQMesh_Cloud", "Cloud Sync Success: Message ${newSos.id} is now on the central dashboard.")
+                if (location != null) {
+                    myCurrentLat.value = lat
+                    myCurrentLon.value = lon
+                }
+                processSosMessage(type, messageText, lat, lon)
             }
-
-            val typeByte = typeToByte(type)
-            val myDeviceId = settingsRepository.getOrGenerateDeviceId()
-
-            fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
-                .addOnSuccessListener { location ->
-                    val lat = location?.latitude?.toFloat() ?: 0.0f
-                    val lon = location?.longitude?.toFloat() ?: 0.0f
-                    bleMeshManager.startAdvertising(myDeviceId, messageText, lat, lon, typeByte)
-                }
-                .addOnFailureListener { 
-                    bleMeshManager.startAdvertising(myDeviceId, messageText, 0.0f, 0.0f, typeByte)
-                }
-        }
+            .addOnFailureListener {
+                val lat = myCurrentLat.value ?: 0.0
+                val lon = myCurrentLon.value ?: 0.0
+                processSosMessage(type, messageText, lat, lon)
+            }
         return SendSosResult.SUCCESS
     }
 
@@ -191,15 +217,57 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 type = receivedType,
                 message = messageText,
                 timestamp = System.currentTimeMillis(),
-                status = DeliveryStatus.RELAYED, // Changed from DELIVERED
+                status = DeliveryStatus.RELAYED, // Always RELAYED for incoming messages
                 latitude = lat.toDouble(),
                 longitude = lon.toDouble()
             )
 
             sosRepository.saveMessage(incomingSos)
             Log.d("MainViewModel", "Saved incoming mesh SOS: $smartId")
+
+            if (_isInternetActuallyWorking.value) {
+                sendToWebhook(incomingSos)
+            }
         }
     }
+
+    // --- HELPER FUNCTIONS ---
+
+    private suspend fun sendToWebhook(message: SosMessageEntity) {
+        withContext(Dispatchers.IO) {
+            try {
+                val url = URL("https://webhook.site/13b698d6-2410-4348-9a80-302c9a549756")
+                // Basic JSON serialization
+                val jsonBody = """
+                    {
+                        "id": "${message.id}",
+                        "type": "${message.type.name}",
+                        "message": "${message.message}",
+                        "timestamp": ${message.timestamp},
+                        "status": "${message.status.name}",
+                        "latitude": ${message.latitude ?: "null"},
+                        "longitude": ${message.longitude ?: "null"}
+                    }
+                """.trimIndent()
+
+                (url.openConnection() as? HttpURLConnection)?.run {
+                    requestMethod = "POST"
+                    setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                    setRequestProperty("Accept", "application/json")
+                    doOutput = true
+                    outputStream.use { os ->
+                        val input = jsonBody.toByteArray(Charsets.UTF_8)
+                        os.write(input, 0, input.size)
+                    }
+                    Log.d("ResQMesh_Cloud", "Webhook response code: $responseCode - $responseMessage")
+                    disconnect()
+                }
+            } catch (e: Exception) {
+                Log.e("ResQMesh_Cloud", "Error sending to webhook: ${e.message}")
+            }
+        }
+    }
+
 
     private fun typeToByte(type: SosType): Byte = when(type) {
         SosType.MEDICAL -> 1
