@@ -214,6 +214,11 @@ fun HomeScreen(
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
 
+    // NEW: We need to access the hardware managers to see exactly what is turned off
+    val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+    val bluetoothAdapter: BluetoothAdapter? = bluetoothManager.adapter
+    val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as android.location.LocationManager
+
     val quickReplies = listOf(
         QuickReply("Medical Help", SosType.MEDICAL),
         QuickReply("Trapped", SosType.TRAPPED),
@@ -221,6 +226,17 @@ fun HomeScreen(
         QuickReply("Need Food/H2O", SosType.FOOD),
         QuickReply("Rescue Me", SosType.RESCUE)
     )
+
+    // NEW: The Bluetooth Pop-up launcher for the Home Screen!
+    val enableBluetoothLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            Toast.makeText(context, "Bluetooth Activated. Please press SEND SOS again!", Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(context, "Bluetooth activation denied. Cannot send SOS.", Toast.LENGTH_SHORT).show()
+        }
+    }
 
     val sendAction = {
         val result = onSendSos(selectedType, messageText)
@@ -236,7 +252,19 @@ fun HomeScreen(
                 Toast.makeText(context, "FAILED: Message cannot be empty.", Toast.LENGTH_LONG).show()
             }
             SendSosResult.HARDWARE_NOT_READY -> {
-                Toast.makeText(context, "FAILED: Please turn on Bluetooth and GPS Location!", Toast.LENGTH_LONG).show()
+                // THE FIX: Actively prompt the user to turn on the missing hardware!
+                val isGpsOn = locationManager.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER)
+                val isBtOn = bluetoothAdapter?.isEnabled == true
+
+                if (!isGpsOn) {
+                    Toast.makeText(context, "Please enable GPS Location to broadcast SOS", Toast.LENGTH_LONG).show()
+                    context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+                }
+
+                if (!isBtOn) {
+                    val enableBtIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
+                    enableBluetoothLauncher.launch(enableBtIntent)
+                }
             }
         }
     }
@@ -340,10 +368,10 @@ fun HomeScreen(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(16.dp))
                                 .background(if (messageText == reply.message) BrightCyan else Color(0xFF1E1E1E))
-                                .clickable { 
+                                .clickable {
                                     messageText = reply.message
                                     selectedType = reply.type
-                                 }
+                                }
                                 .padding(horizontal = 16.dp, vertical = 8.dp)
                         ) {
                             Text(
@@ -358,12 +386,12 @@ fun HomeScreen(
                 OutlinedTextField(
                     value = messageText,
                     onValueChange = { newText ->
-                        if (newText.length <= 15) {
-                            messageText = newText.filter { it.isLetterOrDigit() || it.isWhitespace() || it in ".,'?!-()/" } 
+                        if (newText.length <= 14) { // Safety constraint based on our payload math!
+                            messageText = newText.filter { it.isLetterOrDigit() || it.isWhitespace() || it in ".,'?!-()/" }
                         }
                     },
                     label = { Text("Custom Message (Optional)", color = TextLightGray) },
-                    placeholder = { Text("Max 15 chars...", color = DarkGray) },
+                    placeholder = { Text("Max 14 chars...", color = DarkGray) },
                     modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = BrightCyan,
@@ -373,10 +401,10 @@ fun HomeScreen(
                     ),
                     supportingText = {
                         Text(
-                            text = "${messageText.length} / 15",
+                            text = "${messageText.length} / 14",
                             modifier = Modifier.fillMaxWidth(),
                             textAlign = TextAlign.End,
-                            color = if (messageText.length >= 15) VibrantRed else TextLightGray
+                            color = if (messageText.length >= 14) VibrantRed else TextLightGray
                         )
                     }
                 )

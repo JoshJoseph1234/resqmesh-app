@@ -85,6 +85,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // --- INITIALIZATION ---
     init {
+        syncHardwareState()
         viewModelScope.launch(Dispatchers.IO) {
             while (true) {
                 val hasInternet = ConnectivityUtil.hasRealInternet()
@@ -302,9 +303,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val btManager = getApplication<Application>().getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         val isBtOn = btManager.adapter?.isEnabled == true
 
-        if (bluetoothEnabled.value != isBtOn) {
+
             setBluetoothEnabled(isBtOn)
-        }
+
 
         if (isBtOn) {
             kickstartMeshEars()
