@@ -141,8 +141,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun processSosMessage(type: SosType, messageText: String, lat: Double, lon: Double) {
         viewModelScope.launch {
+            // 1. Fetch our permanent integer ID
+            val myDeviceId = settingsRepository.getOrGenerateDeviceId()
+
+            // 2. Convert it to the 6-character Hex string (exactly like the receiver does!)
+            val myDeviceIdHex = String.format("%06X", myDeviceId)
+
+            // 3. Generate the Smart Deduplication Key so it matches across ALL devices and servers
+            val universalSmartId = "${myDeviceIdHex}_${type.name}_${messageText.hashCode()}"
+
             val newSos = SosMessageEntity(
-                id = UUID.randomUUID().toString(),
+                id = universalSmartId, // <-- THE FIX: Replaced UUID.randomUUID()
                 type = type,
                 message = messageText,
                 timestamp = System.currentTimeMillis(),
@@ -156,12 +165,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 sendToWebhook(newSos)
             } else {
                 val typeByte = typeToByte(type)
-                val myDeviceId = settingsRepository.getOrGenerateDeviceId()
+                // Pass the raw integer ID to the Bluetooth radio packer
                 bleMeshManager.startAdvertising(myDeviceId, messageText, lat.toFloat(), lon.toFloat(), typeByte)
             }
         }
     }
-
     @SuppressLint("MissingPermission")
     fun sendSos(type: SosType, messageText: String): SendSosResult {
         if (messageText.isBlank()) {
