@@ -281,6 +281,7 @@ fun HomeScreen(
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 add(Manifest.permission.NEARBY_WIFI_DEVICES)
+                add(Manifest.permission.POST_NOTIFICATIONS)
             }
         }.toTypedArray()
     }
@@ -534,6 +535,7 @@ fun SettingsScreen(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 add(Manifest.permission.NEARBY_WIFI_DEVICES)
+                add(Manifest.permission.POST_NOTIFICATIONS)
             }
         }.toTypedArray()
     }

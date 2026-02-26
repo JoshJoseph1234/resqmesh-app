@@ -30,6 +30,7 @@ import android.util.Log
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.resqmesh.app.data.SosMessageEntity
+import com.resqmesh.app.network.MeshService
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.net.HttpURLConnection
@@ -104,9 +105,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             bluetoothEnabled.collect { isEnabled ->
-                if (isEnabled) { 
+                if (isEnabled) {
+                    toggleForegroundService(true) // <--- NEW: Start the sticky notification!
                     bleMeshManager.startScanning()
                 } else {
+                    toggleForegroundService(false) // <--- NEW: Remove the notification!
                     bleMeshManager.stopAdvertising()
                     bleMeshManager.stopScanning()
                 }
@@ -320,6 +323,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             bleMeshManager.stopScanning()
             bleMeshManager.stopAdvertising()
+        }
+    }
+    // --- FOREGROUND SERVICE CONTROLLER ---
+    private fun toggleForegroundService(start: Boolean) {
+        val intent = android.content.Intent(getApplication(), MeshService::class.java)
+        if (start) {
+            intent.action = MeshService.ACTION_START
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                getApplication<Application>().startForegroundService(intent)
+            } else {
+                getApplication<Application>().startService(intent)
+            }
+        } else {
+            intent.action = MeshService.ACTION_STOP
+            getApplication<Application>().startService(intent)
         }
     }
 }
