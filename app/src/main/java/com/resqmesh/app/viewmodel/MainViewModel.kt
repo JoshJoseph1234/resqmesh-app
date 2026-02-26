@@ -86,7 +86,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // --- INITIALIZATION ---
     init {
+        // 1. Force hardware sync
         syncHardwareState()
+
+        // 2. NEW: Run the Garbage Collector!
+        cleanupOldMessages()
+
         viewModelScope.launch(Dispatchers.IO) {
             while (true) {
                 val hasInternet = ConnectivityUtil.hasRealInternet()
@@ -106,14 +111,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             bluetoothEnabled.collect { isEnabled ->
                 if (isEnabled) {
-                    toggleForegroundService(true) // <--- NEW: Start the sticky notification!
+                    toggleForegroundService(true)
                     bleMeshManager.startScanning()
                 } else {
-                    toggleForegroundService(false) // <--- NEW: Remove the notification!
+                    toggleForegroundService(false)
                     bleMeshManager.stopAdvertising()
                     bleMeshManager.stopScanning()
                 }
             }
+        }
+    }
+
+    // NEW: The Garbage Collector Function
+    private fun cleanupOldMessages() {
+        viewModelScope.launch(Dispatchers.IO) {
+            // 48 hours = 48 * 60 minutes * 60 seconds * 1000 milliseconds
+            val fortyEightHoursAgo = System.currentTimeMillis() - (48L * 60L * 60L * 1000L)
+
+            Log.d("ResQMesh_DB", "Running DB Cleanup. Pruning messages older than $fortyEightHoursAgo")
+            sosRepository.deleteOldMessages(fortyEightHoursAgo)
         }
     }
 
@@ -164,6 +180,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
             sosRepository.saveMessage(newSos)
 
+            Log.d("ResQMesh_Flow", "Processing SOS. Internet active: ${_isInternetActuallyWorking.value}")
+
             if (_isInternetActuallyWorking.value) {
                 sendToWebhook(newSos)
             } else {
@@ -183,12 +201,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return SendSosResult.HARDWARE_NOT_READY
         }
 
-        if (!hasRequiredPermissions()) {
-            Log.e("MainViewModel", "sendSos called without required permissions!")
-            return SendSosResult.HARDWARE_NOT_READY
-        }
+        Log.d("ResQMesh_Flow", "SEND SOS Button Pressed. Fetching location...")
 
-        fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
+        // THE FIX: Use lastLocation instead of getCurrentLocation to prevent infinite hanging!
+        fusedLocationClient.lastLocation
             .addOnSuccessListener { location ->
                 val lat = location?.latitude ?: myCurrentLat.value ?: 0.0
                 val lon = location?.longitude ?: myCurrentLon.value ?: 0.0
@@ -197,13 +213,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     myCurrentLat.value = lat
                     myCurrentLon.value = lon
                 }
+
+                Log.d("ResQMesh_Flow", "Location secured ($lat, $lon). Moving to process...")
                 processSosMessage(type, messageText, lat, lon)
             }
             .addOnFailureListener {
+                Log.e("ResQMesh_Flow", "Location failed! Falling back to 0.0")
                 val lat = myCurrentLat.value ?: 0.0
                 val lon = myCurrentLon.value ?: 0.0
                 processSosMessage(type, messageText, lat, lon)
             }
+
         return SendSosResult.SUCCESS
     }
 
@@ -248,7 +268,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun sendToWebhook(message: SosMessageEntity) {
         withContext(Dispatchers.IO) {
             try {
-                val url = URL("https://webhook.site/13b698d6-2410-4348-9a80-302c9a549756")
+                val url = URL("https://webhook.site/ecf81c35-dc21-4f49-b1f7-c37b558e8f1e")
                 // Basic JSON serialization
                 val jsonBody = """
                     {

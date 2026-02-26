@@ -12,7 +12,7 @@ data class SosMessageEntity(
     val type: SosType,
     val message: String,
     val timestamp: Long,
-    var status: DeliveryStatus, // Changed to var
+    var status: DeliveryStatus,
     val latitude: Double? = null,
     val longitude: Double? = null
 )
@@ -44,6 +44,10 @@ interface SosDao {
 
     @Query("SELECT * FROM sos_messages WHERE status = 'PENDING'")
     suspend fun getPendingMessages(): List<SosMessageEntity>
+
+    // NEW: The Garbage Collector SQL Query
+    @Query("DELETE FROM sos_messages WHERE timestamp < :thresholdTime")
+    suspend fun deleteMessagesOlderThan(thresholdTime: Long)
 }
 
 @Database(entities = [SosMessageEntity::class], version = 3, exportSchema = false)
@@ -61,8 +65,8 @@ abstract class ResQMeshDatabase : RoomDatabase() {
                     ResQMeshDatabase::class.java,
                     "resqmesh_offline_db"
                 )
-                .fallbackToDestructiveMigration()
-                .build()
+                    .fallbackToDestructiveMigration()
+                    .build()
                 INSTANCE = instance
                 instance
             }
@@ -83,5 +87,10 @@ class SosRepository(private val dao: SosDao) {
 
     suspend fun getPendingMessages(): List<SosMessageEntity> {
         return dao.getPendingMessages()
+    }
+
+    // NEW: Expose the delete function to the ViewModel
+    suspend fun deleteOldMessages(thresholdTime: Long) {
+        dao.deleteMessagesOlderThan(thresholdTime)
     }
 }
