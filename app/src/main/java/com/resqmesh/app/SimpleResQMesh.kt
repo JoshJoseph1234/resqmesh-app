@@ -58,7 +58,7 @@ import android.content.IntentFilter
 
 // --- DATA MODELS ---
 enum class SosType { MEDICAL, RESCUE, FOOD, TRAPPED, GENERAL, OTHER }
-enum class DeliveryStatus { PENDING, RELAYED, DELIVERED }
+enum class DeliveryStatus { PENDING, RELAYED, DELIVERED, SENT_TO_NODE,ACKNOWLEDGED }
 enum class ConnectivityState { OFFLINE, MESH_ACTIVE, INTERNET }
 enum class SendSosResult { SUCCESS, EMPTY_MESSAGE, HARDWARE_NOT_READY }
 
@@ -455,6 +455,9 @@ fun StatusScreen(messages: List<SosMessage>) {
                     DeliveryStatus.DELIVERED -> Triple(SuccessGreen, SuccessGreenBg, Icons.Default.CheckCircle)
                     DeliveryStatus.RELAYED -> Triple(RelayedBlue, RelayedBlueBg, Icons.Default.Wifi)
                     DeliveryStatus.PENDING -> Triple(AmberText, AmberBg, Icons.Default.Refresh)
+                    // NEW: LoRa Gateway UI States
+                    DeliveryStatus.SENT_TO_NODE -> Triple(RelayedBlue, RelayedBlueBg, Icons.Default.Send) // Shows it's en route via the node
+                    DeliveryStatus.ACKNOWLEDGED -> Triple(SuccessGreen, SuccessGreenBg, Icons.Default.DoneAll) // Double checkmarks for confirmed receipt!
                 }
 
                 Card(
