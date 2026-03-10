@@ -13,13 +13,15 @@ import kotlinx.coroutines.flow.StateFlow
 import java.util.UUID
 import java.util.concurrent.ConcurrentLinkedQueue
 
-enum class LoRaConnectionState { DISCONNECTED, SCANNING, CONNECTED }
+// NEW: Added CONNECTING state for the UI
+enum class LoRaConnectionState { DISCONNECTED, SCANNING, CONNECTING, CONNECTED }
 
 @SuppressLint("MissingPermission")
 class LoRaNodeManager(private val context: Context) {
 
     private val SERVICE_UUID = UUID.fromString("4fafc201-1fb5-459e-8fcc-c5c9c331914b")
     private val WRITE_CHAR_UUID = UUID.fromString("beb5483e-36e1-4688-b7f5-ea07361b26a8")
+    // Keep the Notify UUID so we can get the ACK!
     private val NOTIFY_CHAR_UUID = UUID.fromString("cc821ea3-9b9f-4eb8-8884-25b57d00f77b")
     private val CCCD_UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
@@ -49,9 +51,12 @@ class LoRaNodeManager(private val context: Context) {
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult?) {
             val device = result?.device ?: return
-            Log.d("ResQMesh_LoRa", "Found Gateway! Stopping scan and connecting...")
 
-            // FIX 1: Fetch fresh scanner to stop safely
+            // Optional: You can filter by name here, but filtering by Service UUID (below) is mathematically safer.
+            Log.d("ResQMesh_LoRa", "Found Transmitter Node! Stopping scan and connecting...")
+
+            _connectionState.value = LoRaConnectionState.CONNECTING // Update UI to Connecting
+
             bluetoothManager.adapter?.bluetoothLeScanner?.stopScan(this)
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -67,7 +72,6 @@ class LoRaNodeManager(private val context: Context) {
     }
 
     private fun startScanning() {
-        // FIX 2: Dynamically grab a fresh scanner in case Bluetooth was toggled!
         val currentScanner = bluetoothManager.adapter?.bluetoothLeScanner
         if (bluetoothManager.adapter?.isEnabled == false || currentScanner == null || messageQueue.isEmpty()) {
             isProcessing = false
@@ -75,8 +79,9 @@ class LoRaNodeManager(private val context: Context) {
         }
 
         isProcessing = true
-        _connectionState.value = LoRaConnectionState.SCANNING
+        _connectionState.value = LoRaConnectionState.SCANNING // Update UI to Scanning
 
+        // We filter strictly by your Service UUID to guarantee we only find the Transmitter node
         val filter = ScanFilter.Builder().setServiceUuid(android.os.ParcelUuid(SERVICE_UUID)).build()
         val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
         currentScanner.startScan(listOf(filter), settings, scanCallback)
@@ -85,22 +90,14 @@ class LoRaNodeManager(private val context: Context) {
     private val gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
             if (status == BluetoothGatt.GATT_SUCCESS && newState == BluetoothProfile.STATE_CONNECTED) {
-                Log.d("ResQMesh_LoRa", "GATT Connected! Requesting MTU 512...")
-                // FIX 3: Wait 300ms before negotiating MTU to stabilize Android's BT stack
-                Handler(Looper.getMainLooper()).postDelayed({
-                    gatt.requestMtu(512)
-                }, 300)
+                Handler(Looper.getMainLooper()).postDelayed({ gatt.requestMtu(512) }, 300)
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                Log.w("ResQMesh_LoRa", "GATT Disconnected.")
                 disconnectAndFreeNode()
             }
         }
 
         override fun onMtuChanged(gatt: BluetoothGatt?, mtu: Int, status: Int) {
-            if (status == BluetoothGatt.GATT_SUCCESS) {
-                Log.d("ResQMesh_LoRa", "MTU changed to $mtu. Discovering services...")
-                gatt?.discoverServices()
-            }
+            if (status == BluetoothGatt.GATT_SUCCESS) gatt?.discoverServices()
         }
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
@@ -110,7 +107,6 @@ class LoRaNodeManager(private val context: Context) {
                 val notifyChar = service?.getCharacteristic(NOTIFY_CHAR_UUID)
 
                 if (notifyChar != null && writeCharacteristic != null) {
-                    Log.d("ResQMesh_LoRa", "Services found. Enabling notifications...")
                     gatt.setCharacteristicNotification(notifyChar, true)
                     val descriptor = notifyChar.getDescriptor(CCCD_UUID)
                     if (descriptor != null) {
@@ -121,21 +117,18 @@ class LoRaNodeManager(private val context: Context) {
                             gatt.writeDescriptor(descriptor)
                         }
                     }
-                    _connectionState.value = LoRaConnectionState.CONNECTED
-                    // NOTE: We do NOT call sendNextInQueue() here anymore!
+                    _connectionState.value = LoRaConnectionState.CONNECTED // Update UI to Connected
                 } else {
+                    Log.e("ResQMesh_LoRa", "Transmitter Node is missing the Notify Characteristic!")
                     disconnectAndFreeNode()
                 }
             }
         }
 
-        // FIX 4: Wait until the OS confirms we are subscribed before sending data!
         override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
-                Log.d("ResQMesh_LoRa", "Notifications enabled! Now safe to write JSON.")
                 sendNextInQueue()
             } else {
-                Log.e("ResQMesh_LoRa", "Failed to subscribe to notifications.")
                 disconnectAndFreeNode()
             }
         }
@@ -150,13 +143,13 @@ class LoRaNodeManager(private val context: Context) {
 
         private fun handleIncomingAck(value: ByteArray) {
             val response = String(value, Charsets.UTF_8)
-            Log.d("ResQMesh_LoRa", "ESP32 says: $response")
+            Log.d("ResQMesh_LoRa", "Transmitter says: $response")
 
             if (response.contains("received") && lastSentMessageId != null) {
                 onAckReceived?.invoke(lastSentMessageId!!)
                 messageQueue.poll()
                 lastSentMessageId = null
-                disconnectAndFreeNode() // Drop connection instantly so other phones can use the ESP32!
+                disconnectAndFreeNode()
             }
         }
     }
@@ -165,7 +158,6 @@ class LoRaNodeManager(private val context: Context) {
         val nextMsg = messageQueue.peek()
         if (nextMsg != null && writeCharacteristic != null) {
             lastSentMessageId = nextMsg.first
-            Log.d("ResQMesh_LoRa", "Sending JSON to ESP32: ${nextMsg.second}")
             writeCharacteristic?.value = nextMsg.second.toByteArray(Charsets.UTF_8)
             writeCharacteristic?.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
             bluetoothGatt?.writeCharacteristic(writeCharacteristic)
@@ -174,8 +166,8 @@ class LoRaNodeManager(private val context: Context) {
         }
     }
 
-    private fun disconnectAndFreeNode() {
-        _connectionState.value = LoRaConnectionState.DISCONNECTED
+    fun disconnectAndFreeNode() {
+        _connectionState.value = LoRaConnectionState.DISCONNECTED // Update UI to Disconnected
         bluetoothGatt?.disconnect()
         bluetoothGatt?.close()
         bluetoothGatt = null
@@ -183,10 +175,7 @@ class LoRaNodeManager(private val context: Context) {
         isProcessing = false
 
         if (messageQueue.isNotEmpty()) {
-            Log.d("ResQMesh_LoRa", "Queue not empty. Restarting sequence for next message in 1s...")
-            Handler(Looper.getMainLooper()).postDelayed({
-                startScanning()
-            }, 1000)
+            Handler(Looper.getMainLooper()).postDelayed({ startScanning() }, 1000)
         }
     }
 }
