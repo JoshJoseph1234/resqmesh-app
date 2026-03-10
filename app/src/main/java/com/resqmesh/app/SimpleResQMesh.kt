@@ -56,9 +56,12 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import android.content.BroadcastReceiver
 import android.content.IntentFilter
 
+// NEW: Import the LoRa State!
+import com.resqmesh.app.network.LoRaConnectionState
+
 // --- DATA MODELS ---
 enum class SosType { MEDICAL, RESCUE, FOOD, TRAPPED, GENERAL, OTHER }
-enum class DeliveryStatus { PENDING, RELAYED, DELIVERED, SENT_TO_NODE,ACKNOWLEDGED }
+enum class DeliveryStatus { PENDING, RELAYED, DELIVERED, SENT_TO_NODE, ACKNOWLEDGED }
 enum class ConnectivityState { OFFLINE, MESH_ACTIVE, INTERNET }
 enum class SendSosResult { SUCCESS, EMPTY_MESSAGE, HARDWARE_NOT_READY }
 
@@ -85,7 +88,7 @@ val TextLightGray = Color(0xFFA0A0AB)
 val AmberText = Color(0xFFFFB300)
 val AmberBg = Color(0xFF332200)
 
-// New Colors for Settings & Status
+// Colors for Settings & Status
 val SuccessGreen = Color(0xFF00E676)
 val SuccessGreenBg = Color(0xFF003314)
 val RelayedBlue = Color(0xFF00B0FF)
@@ -134,6 +137,8 @@ fun SimpleResQMeshApp(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
 
     val sentMessages by viewModel.sentMessages.collectAsState()
     val connectivity by viewModel.connectivity.collectAsState()
+    // NEW: Collect the LoRa State from the ViewModel
+    val loraState by viewModel.loraConnectionState.collectAsState()
 
     val items = listOf(
         Screen("home", "Home", Icons.Default.Home),
@@ -183,6 +188,7 @@ fun SimpleResQMeshApp(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
             composable("home") {
                 HomeScreen(
                     connectivity = connectivity,
+                    loraState = loraState, // NEW: Pass it to the HomeScreen
                     onSendSos = { type, msg -> viewModel.sendSos(type, msg) }
                 )
             }
@@ -205,6 +211,7 @@ fun SimpleResQMeshApp(viewModel: com.resqmesh.app.viewmodel.MainViewModel) {
 @Composable
 fun HomeScreen(
     connectivity: ConnectivityState,
+    loraState: LoRaConnectionState, // NEW: Accepted parameter
     onSendSos: (SosType, String) -> SendSosResult
 ) {
     val context = LocalContext.current
@@ -214,7 +221,6 @@ fun HomeScreen(
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
 
-    // NEW: We need to access the hardware managers to see exactly what is turned off
     val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
     val bluetoothAdapter: BluetoothAdapter? = bluetoothManager.adapter
     val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as android.location.LocationManager
@@ -227,7 +233,6 @@ fun HomeScreen(
         QuickReply("Rescue Me", SosType.RESCUE)
     )
 
-    // NEW: The Bluetooth Pop-up launcher for the Home Screen!
     val enableBluetoothLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -252,7 +257,6 @@ fun HomeScreen(
                 Toast.makeText(context, "FAILED: Message cannot be empty.", Toast.LENGTH_LONG).show()
             }
             SendSosResult.HARDWARE_NOT_READY -> {
-                // THE FIX: Actively prompt the user to turn on the missing hardware!
                 val isGpsOn = locationManager.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER)
                 val isBtOn = bluetoothAdapter?.isEnabled == true
 
@@ -314,6 +318,8 @@ fun HomeScreen(
             Text("ResQMesh", color = TextWhite, fontSize = 28.sp, fontWeight = FontWeight.Bold)
             Text("Emergency Response Network", color = Color(0xFF8C9EFF), fontSize = 14.sp)
             Spacer(Modifier.height(24.dp))
+
+            // --- DASHBOARD STATUS ROW 1: Connectivity ---
             Row(
                 modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(DarkCyanBg).padding(horizontal = 16.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -327,8 +333,28 @@ fun HomeScreen(
                 Spacer(Modifier.width(8.dp))
                 Text(statusText, color = BrightCyan, fontSize = 14.sp)
             }
+
+            Spacer(Modifier.height(8.dp))
+
+            // --- DASHBOARD STATUS ROW 2: LoRa Transmitter Node ---
+            val (loraColor, loraText) = when (loraState) {
+                LoRaConnectionState.CONNECTED -> SuccessGreen to "Gateway Connected"
+                LoRaConnectionState.SCANNING -> AmberText to "Hunting for Gateway..."
+                LoRaConnectionState.CONNECTING -> AmberText to "Connecting to Gateway..."
+                LoRaConnectionState.DISCONNECTED -> VibrantRed to "Gateway Disconnected"
+            }
+
+            Row(
+                modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(DarkCyanBg).padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Default.Bluetooth, null, tint = loraColor, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(loraText, color = loraColor, fontSize = 14.sp)
+            }
         }
 
+        // --- REST OF THE UI REMAINS EXACTLY THE SAME ---
         Column(modifier = Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.SpaceBetween) {
             Column {
                 Text("Emergency Type", color = TextWhite, fontSize = 14.sp, modifier = Modifier.padding(bottom = 8.dp))
@@ -387,7 +413,7 @@ fun HomeScreen(
                 OutlinedTextField(
                     value = messageText,
                     onValueChange = { newText ->
-                        if (newText.length <= 14) { // Safety constraint based on our payload math!
+                        if (newText.length <= 14) {
                             messageText = newText.filter { it.isLetterOrDigit() || it.isWhitespace() || it in ".,'?!-()/" }
                         }
                     },
@@ -441,6 +467,7 @@ fun HomeScreen(
     }
 }
 
+// ... StatusScreen, SettingsScreen, and Helper functions remain unchanged below ...
 @Composable
 fun StatusScreen(messages: List<SosMessage>) {
     Column(modifier = Modifier.fillMaxSize().background(PureBlack)) {
@@ -455,9 +482,8 @@ fun StatusScreen(messages: List<SosMessage>) {
                     DeliveryStatus.DELIVERED -> Triple(SuccessGreen, SuccessGreenBg, Icons.Default.CheckCircle)
                     DeliveryStatus.RELAYED -> Triple(RelayedBlue, RelayedBlueBg, Icons.Default.Wifi)
                     DeliveryStatus.PENDING -> Triple(AmberText, AmberBg, Icons.Default.Refresh)
-                    // NEW: LoRa Gateway UI States
-                    DeliveryStatus.SENT_TO_NODE -> Triple(RelayedBlue, RelayedBlueBg, Icons.Default.Send) // Shows it's en route via the node
-                    DeliveryStatus.ACKNOWLEDGED -> Triple(SuccessGreen, SuccessGreenBg, Icons.Default.DoneAll) // Double checkmarks for confirmed receipt!
+                    DeliveryStatus.SENT_TO_NODE -> Triple(RelayedBlue, RelayedBlueBg, Icons.Default.Send)
+                    DeliveryStatus.ACKNOWLEDGED -> Triple(SuccessGreen, SuccessGreenBg, Icons.Default.DoneAll)
                 }
 
                 Card(

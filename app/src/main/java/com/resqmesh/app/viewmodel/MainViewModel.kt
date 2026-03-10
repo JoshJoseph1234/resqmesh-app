@@ -63,6 +63,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _connectivity = MutableStateFlow(ConnectivityState.OFFLINE)
     val connectivity = _connectivity.asStateFlow()
+    // NEW: Expose the LoRa connection state directly to the Compose UI
+    val loraConnectionState: StateFlow<LoRaConnectionState> = loRaNodeManager.connectionState
 
     private val _isInternetActuallyWorking = MutableStateFlow(false)
 
@@ -158,7 +160,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val myDeviceId = settingsRepository.getOrGenerateDeviceId()
             val myDeviceIdHex = String.format("%06X", myDeviceId)
-            val universalSmartId = "${myDeviceIdHex}_${type.name}_${messageText.hashCode()}"
+// NEW: Updated ID format to identify mobile nodes
+            val universalSmartId = "mobile_${myDeviceIdHex}_${type.name}_${messageText.hashCode()}"
 
             val newSos = SosMessageEntity(
                 id = universalSmartId,
@@ -307,7 +310,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun sendToWebhook(message: SosMessageEntity) {
         withContext(Dispatchers.IO) {
             try {
-                val url = URL("https://webhook.site/a006a0c8-102a-4b0a-9fd3-c4b3d2b670bd")
+                val url = URL("https://webhook.site/0c7d9c76-fdd9-4fe0-a59b-fc4dcfd9b265")
                 val jsonBody = """
                     {
                         "id": "${message.id}",
