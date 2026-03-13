@@ -136,9 +136,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (pendingMessages.isNotEmpty()) {
             Log.d("ResQMesh_Cloud", "Internet connection detected. Syncing ${pendingMessages.size} pending messages.")
             pendingMessages.forEach { message ->
-                sendToWebhook(message)
-                delay(200)
-                sosRepository.updateMessageStatus(message.id, DeliveryStatus.DELIVERED)
+                // Wait to see if it actually succeeds!
+                val success = sendToWebhook(message)
+                if (success) {
+                    delay(200)
+                    sosRepository.updateMessageStatus(message.id, DeliveryStatus.DELIVERED)
+                } else {
+                    Log.e("ResQMesh_Cloud", "Sync failed for message ${message.id}. Keeping as PENDING.")
+                }
             }
         }
     }
@@ -160,7 +165,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val myDeviceId = settingsRepository.getOrGenerateDeviceId()
             val myDeviceIdHex = String.format("%06X", myDeviceId)
-// NEW: Updated ID format to identify mobile nodes
             val universalSmartId = "mobile_${myDeviceIdHex}_${type.name}_${messageText.hashCode()}"
 
             val newSos = SosMessageEntity(
@@ -168,40 +172,42 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 type = type,
                 message = messageText,
                 timestamp = System.currentTimeMillis(),
-                status = if (_isInternetActuallyWorking.value) DeliveryStatus.DELIVERED else DeliveryStatus.PENDING,
+                status = DeliveryStatus.PENDING, // ALWAYS start as pending
                 latitude = lat,
                 longitude = lon
             )
             sosRepository.saveMessage(newSos)
 
-            Log.d("ResQMesh_Flow", "Processing SOS. Internet active: ${_isInternetActuallyWorking.value}")
+            val jsonBody = """
+                {
+                    "id": "${newSos.id}",
+                    "type": "${newSos.type.name}",
+                    "message": "${newSos.message}",
+                    "timestamp": ${newSos.timestamp},
+                    "status": "SENT_TO_NODE",
+                    "latitude": ${newSos.latitude ?: "null"},
+                    "longitude": ${newSos.longitude ?: "null"}
+                }
+            """.trimIndent()
 
             if (_isInternetActuallyWorking.value) {
-                sendToWebhook(newSos)
+                val success = sendToWebhook(newSos)
+                if (success) {
+                    sosRepository.updateMessageStatus(newSos.id, DeliveryStatus.DELIVERED)
+                } else {
+                    // NEW: If the internet fails, instantly fallback to the hardware mesh!
+                    Log.w("ResQMesh_Flow", "Cloud upload failed. Falling back to LoRa Gateway...")
+                    val typeByte = typeToByte(type)
+                    bleMeshManager.startAdvertising(myDeviceId, messageText, lat.toFloat(), lon.toFloat(), typeByte)
+                    loRaNodeManager.queueMessageForNode(jsonBody, newSos.id)
+                }
             } else {
-                // 1. Blast to BLE Mesh (Phones)
                 val typeByte = typeToByte(type)
                 bleMeshManager.startAdvertising(myDeviceId, messageText, lat.toFloat(), lon.toFloat(), typeByte)
-
-                // 2. Queue for LoRa Gateway (Hit-and-Run)
-                val jsonBody = """
-                    {
-                        "id": "${newSos.id}",
-                        "type": "${newSos.type.name}",
-                        "message": "${newSos.message}",
-                        "timestamp": ${newSos.timestamp},
-                        "status": "SENT_TO_NODE",
-                        "latitude": ${newSos.latitude ?: "null"},
-                        "longitude": ${newSos.longitude ?: "null"}
-                    }
-                """.trimIndent()
-
-                // Just throw it in the queue. The manager will handle finding the node!
                 loRaNodeManager.queueMessageForNode(jsonBody, newSos.id)
             }
         }
     }
-
     @SuppressLint("MissingPermission")
     fun sendSos(type: SosType, messageText: String): SendSosResult {
         if (messageText.isBlank()) return SendSosResult.EMPTY_MESSAGE
@@ -307,10 +313,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private suspend fun sendToWebhook(message: SosMessageEntity) {
-        withContext(Dispatchers.IO) {
+    private suspend fun sendToWebhook(message: SosMessageEntity): Boolean {
+        return withContext(Dispatchers.IO) {
             try {
-                val url = URL("https://webhook.site/0c7d9c76-fdd9-4fe0-a59b-fc4dcfd9b265")
+                // REPLACE THIS WITH THE EXACT URL FROM YOUR RAILWAY DASHBOARD / REQBIN HISTORY
+                val url = URL("https://resqmesh-server-production.up.railway.app/api/alerts/ingress")
                 val jsonBody = """
                     {
                         "id": "${message.id}",
@@ -323,25 +330,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 """.trimIndent()
 
-                (url.openConnection() as? HttpURLConnection)?.run {
-                    requestMethod = "POST"
-                    setRequestProperty("Content-Type", "application/json; charset=utf-8")
-                    setRequestProperty("Accept", "application/json")
-                    doOutput = true
-                    outputStream.use { os ->
-                        val input = jsonBody.toByteArray(Charsets.UTF_8)
-                        os.write(input, 0, input.size)
-                    }
-                    Log.d("ResQMesh_Cloud", "Webhook response code: $responseCode - $responseMessage")
-                    disconnect()
+                val connection = url.openConnection() as HttpURLConnection
+                connection.requestMethod = "POST"
+                connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                connection.setRequestProperty("Accept", "application/json")
+                connection.setRequestProperty("User-Agent", "ResQMesh-Android/1.0")
+                connection.doOutput = true
+
+                connection.outputStream.use { os ->
+                    val input = jsonBody.toByteArray(Charsets.UTF_8)
+                    os.write(input, 0, input.size)
                 }
+
+                val responseCode = connection.responseCode
+                Log.d("ResQMesh_Cloud", "Server Response: $responseCode")
+                connection.disconnect()
+
+                // Only return true if the server explicitly says "200 OK" or similar success code
+                return@withContext responseCode in 200..299
             } catch (e: Exception) {
-                Log.e("ResQMesh_Cloud", "Error sending to webhook: ${e.message}")
+                Log.e("ResQMesh_Cloud", "Error sending to server: ${e.message}")
+                return@withContext false
             }
         }
-    }
-
-    private fun typeToByte(type: SosType): Byte = when(type) {
+    }    private fun typeToByte(type: SosType): Byte = when(type) {
         SosType.MEDICAL -> 1; SosType.RESCUE -> 2; SosType.FOOD -> 3; SosType.TRAPPED -> 4; SosType.GENERAL -> 5; else -> 6
     }
 
